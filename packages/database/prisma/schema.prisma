@@ -1,0 +1,225 @@
+// Prisma Schema for Autonomous Agents Platform
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// User Model
+// ============================================================================
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  projects Project[]
+  builds   Build[]
+  chats    ChatSession[]
+  appSpecs AppSpec[]
+
+  @@map("users")
+}
+
+// ============================================================================
+// Project Model
+// ============================================================================
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  builds   Build[]
+  appSpecs AppSpec[]
+  chats    ChatSession[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// ============================================================================
+// ChatSession Model - Stores chat conversations
+// ============================================================================
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  title     String   @default("New Chat")
+  userId    String
+  projectId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Chat content stored as JSON array of messages
+  messages Json @default("[]")
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  appSpec AppSpec?
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("chat_sessions")
+}
+
+// ============================================================================
+// AppSpec Model - Stores generated app specifications
+// ============================================================================
+
+model AppSpec {
+  id        String   @id @default(cuid())
+  name      String
+  content   String   @db.Text
+  userId    String
+  projectId String?
+  chatId    String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Two-stage spec generation fields
+  format          String  @default("markdown") // "xml" or "markdown"
+  appDescription  String? @db.Text             // Intermediate format from Stage 1 (Discovery)
+
+  // Relations
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  chat    ChatSession? @relation(fields: [chatId], references: [id], onDelete: SetNull)
+  builds  Build[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("app_specs")
+}
+
+// ============================================================================
+// Build Model
+// ============================================================================
+
+model Build {
+  id        String   @id @default(cuid())
+  projectId String?
+  appSpecId String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Spec configuration (kept for backwards compatibility, but prefer appSpecId)
+  appSpec   String @db.Text
+  harnessId String @default("coding")
+
+  // Complexity tier configuration
+  complexityTier     String  @default("standard") // "simple", "standard", "production"
+  targetFeatureCount Int     @default(80)         // Target number of features (20-40, 60-120, 150-250)
+  complexityInferred Boolean @default(true)       // Was this inferred or manually selected?
+
+  // Sandbox info
+  sandboxId       String?
+  sandboxProvider String  @default("e2b")
+
+  // Status
+  status   BuildStatus @default(PENDING)
+  progress Json? // { total, completed, features }
+
+  // Timing
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Output
+  outputUrl   String?
+  artifactKey String?  // Storage key for build artifacts (e.g., "builds/{id}/artifacts.zip")
+
+  // Relations
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  appSpecRef  AppSpec?     @relation(fields: [appSpecId], references: [id], onDelete: SetNull)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs        BuildLog[]
+  events      BuildEvent[]
+
+  // Indexes for common queries
+  @@index([userId])
+  @@index([projectId])
+  @@index([appSpecId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId, status]) // For filtering user's builds by status
+  @@index([userId, createdAt(sort: Desc)]) // For listing user's recent builds
+  @@map("builds")
+}
+
+// ============================================================================
+// Build Log Model
+// ============================================================================
+
+model BuildLog {
+  id        String   @id @default(cuid())
+  buildId   String
+  createdAt DateTime @default(now())
+
+  // Log content
+  level    String  @db.VarChar(20) // info, warn, error, tool
+  message  String  @db.Text
+  metadata Json?
+
+  // Relations
+  build Build @relation(fields: [buildId], references: [id], onDelete: Cascade)
+
+  @@index([buildId])
+  @@index([createdAt])
+  @@map("build_logs")
+}
+
+// ============================================================================
+// Build Event Model - Structured agent events for activity feed
+// ============================================================================
+
+model BuildEvent {
+  id        String   @id @default(cuid())
+  buildId   String
+  createdAt DateTime @default(now())
+
+  // Event type discriminator (e.g., "tool_start", "file_created", "phase")
+  type      String   @db.VarChar(50)
+
+  // Flexible event data stored as JSON
+  // Contains all event-specific fields (path, toolName, exitCode, etc.)
+  data      Json
+
+  // Relations
+  build     Build    @relation(fields: [buildId], references: [id], onDelete: Cascade)
+
+  @@index([buildId])
+  @@index([buildId, type])
+  @@index([createdAt])
+  @@map("build_events")
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum BuildStatus {
+  PENDING
+  INITIALIZING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}

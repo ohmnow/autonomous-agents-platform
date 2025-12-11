@@ -1,0 +1,50 @@
+{
+  "name": "@repo/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbo",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@clerk/nextjs": "^6.36.1",
+    "@clerk/themes": "^2.4.43",
+    "@prisma/client": "^5.7.0",
+    "@repo/agent-core": "workspace:*",
+    "@repo/database": "workspace:*",
+    "@repo/sandbox-providers": "workspace:*",
+    "@repo/storage": "workspace:*",
+    "@types/archiver": "^7.0.0",
+    "@types/tar-stream": "^3.1.4",
+    "@types/yazl": "^3.3.0",
+    "archiver": "^7.0.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11",
+    "lucide-react": "^0.468.0",
+    "next": "16.0.8",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.5.5",
+    "tar-stream": "^3.1.7",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/typography": "^0.5.19",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

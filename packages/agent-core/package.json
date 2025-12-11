@@ -1,0 +1,56 @@
+{
+  "name": "@repo/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./agent": {
+      "types": "./src/agent.ts",
+      "import": "./dist/agent.js"
+    },
+    "./security": {
+      "types": "./src/security.ts",
+      "import": "./dist/security.js"
+    },
+    "./progress": {
+      "types": "./src/progress.ts",
+      "import": "./dist/progress.js"
+    },
+    "./prompts": {
+      "types": "./src/prompts.ts",
+      "import": "./dist/prompts.js"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./dist/types.js"
+    },
+    "./events": {
+      "types": "./src/events.ts",
+      "import": "./dist/events.js"
+    },
+    "./harnesses": {
+      "types": "./src/harnesses/index.ts",
+      "import": "./dist/harnesses/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^2.0.0"
+  }
+}
