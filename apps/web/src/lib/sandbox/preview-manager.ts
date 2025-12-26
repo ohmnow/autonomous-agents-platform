@@ -13,6 +13,9 @@ const DEFAULT_PREVIEW_PORT = 3000;
 const DEFAULT_PREVIEW_TTL_MS = 60 * 60 * 1000; // 1 hour
 const MAX_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (E2B Pro limit)
 
+// Common subdirectories created by scaffolding tools (e.g., npm create vite@latest portfolio)
+const COMMON_PROJECT_DIRS = ['portfolio', 'app', 'project', 'frontend', 'client', 'web', 'site'];
+
 // Framework detection result
 export interface DetectedFramework {
   name: string;
@@ -32,6 +35,83 @@ export interface PreviewSession {
   status: 'starting' | 'running' | 'stopping' | 'stopped' | 'expired';
   expiresAt: Date;
   startedAt: Date;
+}
+
+/**
+ * Find the actual project directory within the workspace.
+ * Scaffolding tools often create subdirectories (e.g., npm create vite@latest portfolio).
+ * This function searches for where package.json or other project files actually live.
+ */
+export async function findProjectDirectory(
+  sandbox: Sandbox,
+  basePath: string = '/home/user'
+): Promise<string> {
+  // First, check if package.json exists at the base path
+  try {
+    await sandbox.readFile(`${basePath}/package.json`);
+    console.log(`[preview-manager] Found package.json at ${basePath}`);
+    return basePath;
+  } catch {
+    // No package.json at base path, continue searching
+  }
+
+  // Check common subdirectories created by scaffolding tools
+  for (const dir of COMMON_PROJECT_DIRS) {
+    try {
+      await sandbox.readFile(`${basePath}/${dir}/package.json`);
+      console.log(`[preview-manager] Found package.json at ${basePath}/${dir}`);
+      return `${basePath}/${dir}`;
+    } catch {
+      // Not in this directory
+    }
+  }
+
+  // List directory and find first folder with package.json
+  try {
+    const result = await sandbox.exec(`ls -d ${basePath}/*/ 2>/dev/null | head -10`);
+    const dirs = result.stdout.trim().split('\n').filter(Boolean);
+    
+    for (const dir of dirs) {
+      const cleanDir = dir.replace(/\/$/, '');
+      try {
+        await sandbox.readFile(`${cleanDir}/package.json`);
+        console.log(`[preview-manager] Found package.json at ${cleanDir}`);
+        return cleanDir;
+      } catch {
+        // Not in this directory
+      }
+    }
+  } catch {
+    // ls failed, continue with fallbacks
+  }
+
+  // Check for Python projects (requirements.txt, app.py, main.py)
+  for (const dir of COMMON_PROJECT_DIRS) {
+    try {
+      const reqExists = await sandbox.exec(`test -f ${basePath}/${dir}/requirements.txt && echo "yes"`);
+      if (reqExists.stdout.trim() === 'yes') {
+        console.log(`[preview-manager] Found Python project at ${basePath}/${dir}`);
+        return `${basePath}/${dir}`;
+      }
+    } catch {
+      // Not a Python project in this directory
+    }
+  }
+
+  // Check for index.html (static site) in subdirectories
+  for (const dir of COMMON_PROJECT_DIRS) {
+    try {
+      await sandbox.readFile(`${basePath}/${dir}/index.html`);
+      console.log(`[preview-manager] Found static site at ${basePath}/${dir}`);
+      return `${basePath}/${dir}`;
+    } catch {
+      // Not in this directory
+    }
+  }
+
+  // Fallback to base path
+  console.log(`[preview-manager] No project found in subdirectories, using ${basePath}`);
+  return basePath;
 }
 
 /**
@@ -180,8 +260,13 @@ export async function startPreview(
   const {
     port: requestedPort,
     ttlMs = DEFAULT_PREVIEW_TTL_MS,
-    workspacePath = '/home/user',
+    workspacePath: providedPath = '/home/user',
   } = options;
+
+  // Auto-detect the actual project directory
+  // This handles cases where scaffolding tools create subdirectories (e.g., npm create vite@latest portfolio)
+  const workspacePath = await findProjectDirectory(sandbox, providedPath);
+  console.log(`[preview-manager] Using project directory: ${workspacePath}`);
 
   // Detect framework
   const framework = await detectFramework(sandbox, workspacePath);
