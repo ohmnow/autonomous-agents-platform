@@ -284,8 +284,10 @@ export async function startPreview(
       console.log(`[preview-manager] Installing dependencies: ${framework.installCommand}`);
       const installResult = await sandbox.exec(`cd ${workspacePath} && ${framework.installCommand}`);
       if (installResult.exitCode !== 0) {
-        console.warn(`[preview-manager] Install warning: ${installResult.stderr}`);
-        // Don't fail - dependencies might already be installed
+        console.error(`[preview-manager] Install failed (exit ${installResult.exitCode}): ${installResult.stderr}`);
+        // Try to continue anyway - maybe deps are already there
+      } else {
+        console.log(`[preview-manager] Install completed successfully`);
       }
     }
 
@@ -301,8 +303,13 @@ export async function startPreview(
     // Start the server in background
     console.log(`[preview-manager] Starting server: ${framework.startCommand}`);
     // Use nohup and & to run in background, redirect output to files
-    const startCmd = `cd ${workspacePath} && nohup ${framework.startCommand} > /tmp/preview.log 2>&1 &`;
-    await sandbox.exec(startCmd);
+    // Also ensure we're using the correct shell and PATH
+    const startCmd = `cd ${workspacePath} && nohup sh -c '${framework.startCommand}' > /tmp/preview.log 2>&1 &`;
+    const startResult = await sandbox.exec(startCmd);
+    console.log(`[preview-manager] Start command launched (exit ${startResult.exitCode})`);
+    
+    // Give it a moment to actually start the process
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Wait for server to start with retry logic
     // Vite and other dev servers can take 5-15 seconds to start
@@ -328,17 +335,22 @@ export async function startPreview(
 
       // Check if process is still running
       const psCheck = await sandbox.exec(`pgrep -f "(npm|node|vite)" || echo "none"`);
+      console.log(`[preview-manager] Process check: ${psCheck.stdout.trim()}`);
       if (psCheck.stdout.trim() === 'none') {
         // Server process died, check logs immediately
         const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
-        throw new Error(`Server process exited unexpectedly. Logs: ${logs.stdout}`);
+        console.error(`[preview-manager] Server died. Logs:\n${logs.stdout}`);
+        throw new Error(`Server process exited unexpectedly. Logs: ${logs.stdout.slice(0, 500)}`);
       }
     }
 
     if (!serverReady) {
       // Server didn't respond after all retries, check logs
       const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
-      throw new Error(`Server failed to start after ${MAX_RETRIES * RETRY_DELAY_MS / 1000}s. HTTP code: ${lastHttpCode}. Logs: ${logs.stdout}`);
+      const portCheck = await sandbox.exec(`netstat -tlnp 2>/dev/null | grep -E ":${port}|:5173|:3000" || ss -tlnp 2>/dev/null | grep -E ":${port}|:5173|:3000" || echo "no listeners"`);
+      console.error(`[preview-manager] Server didn't respond. Port check: ${portCheck.stdout}`);
+      console.error(`[preview-manager] Preview logs:\n${logs.stdout}`);
+      throw new Error(`Server failed to start after ${MAX_RETRIES * RETRY_DELAY_MS / 1000}s. HTTP code: ${lastHttpCode}. Port check: ${portCheck.stdout.trim()}. Logs: ${logs.stdout.slice(0, 500)}`);
     }
 
     // Get the public URL
