@@ -304,18 +304,41 @@ export async function startPreview(
     const startCmd = `cd ${workspacePath} && nohup ${framework.startCommand} > /tmp/preview.log 2>&1 &`;
     await sandbox.exec(startCmd);
 
-    // Wait a moment for server to start
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Wait for server to start with retry logic
+    // Vite and other dev servers can take 5-15 seconds to start
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY_MS = 2000;
+    let serverReady = false;
+    let lastHttpCode = '000';
 
-    // Verify server is running by checking the port
-    const checkResult = await sandbox.exec(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/ || echo "000"`);
-    const httpCode = checkResult.stdout.trim();
-    
-    // Accept any response (even 404) as long as server is responding
-    if (httpCode === '000') {
-      // Server didn't respond, check logs
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      console.log(`[preview-manager] Checking server status (attempt ${attempt}/${MAX_RETRIES})...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+
+      // Verify server is running by checking the port
+      const checkResult = await sandbox.exec(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/ 2>/dev/null || echo "000"`);
+      lastHttpCode = checkResult.stdout.trim();
+      
+      // Accept any response (even 404) as long as server is responding
+      if (lastHttpCode !== '000') {
+        serverReady = true;
+        console.log(`[preview-manager] Server responded with HTTP ${lastHttpCode}`);
+        break;
+      }
+
+      // Check if process is still running
+      const psCheck = await sandbox.exec(`pgrep -f "(npm|node|vite)" || echo "none"`);
+      if (psCheck.stdout.trim() === 'none') {
+        // Server process died, check logs immediately
+        const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
+        throw new Error(`Server process exited unexpectedly. Logs: ${logs.stdout}`);
+      }
+    }
+
+    if (!serverReady) {
+      // Server didn't respond after all retries, check logs
       const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
-      throw new Error(`Server failed to start. Logs: ${logs.stdout}`);
+      throw new Error(`Server failed to start after ${MAX_RETRIES * RETRY_DELAY_MS / 1000}s. HTTP code: ${lastHttpCode}. Logs: ${logs.stdout}`);
     }
 
     // Get the public URL
