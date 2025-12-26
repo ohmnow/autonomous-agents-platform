@@ -90,6 +90,9 @@ export default function ChatPage() {
   const [targetFeatureCount, setTargetFeatureCount] = useState(80);
   const [complexityReasoning, setComplexityReasoning] = useState('');
   const [complexityInferred, setComplexityInferred] = useState(true);
+  
+  // Review gates state
+  const [reviewGatesEnabled, setReviewGatesEnabled] = useState(false);
 
   // Track if we've initialized from URL
   const initializedRef = useRef(false);
@@ -512,7 +515,7 @@ export default function ChatPage() {
     }
   };
 
-  const handleBuild = async () => {
+  const handleBuild = async (useReviewGates?: boolean) => {
     if (!appSpec) return;
 
     setIsBuilding(true);
@@ -534,6 +537,7 @@ export default function ChatPage() {
           complexityTier,
           targetFeatureCount,
           complexityInferred,
+          reviewGatesEnabled: useReviewGates ?? reviewGatesEnabled,
         }),
       });
 
@@ -777,6 +781,8 @@ export default function ChatPage() {
                 onStartBuild={handleBuild}
                 onRegenerate={handleRegenerateSpec}
                 isBuilding={isBuilding}
+                reviewGatesEnabled={reviewGatesEnabled}
+                onReviewGatesChange={setReviewGatesEnabled}
               />
             ) : (
               <>

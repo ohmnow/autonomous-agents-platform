@@ -8,7 +8,7 @@ import { Sparkles } from 'lucide-react';
 
 interface ChatWindowProps {
   messages: Message[];
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, files?: File[]) => void;
   isLoading?: boolean;
   streamingContent?: string;
   examplePrompts?: string[];

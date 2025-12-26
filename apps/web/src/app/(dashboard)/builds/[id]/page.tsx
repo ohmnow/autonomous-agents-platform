@@ -12,6 +12,8 @@ interface Build {
   appSpec: string;
   createdAt: string;
   artifactKey?: string;
+  sandboxId?: string;
+  outputUrl?: string;
   progress: {
     completed: number;
     total: number;
@@ -102,6 +104,8 @@ export default function BuildDetailPage() {
     appSpec: build.appSpec,
     createdAt: new Date(build.createdAt),
     artifactKey: build.artifactKey,
+    sandboxId: build.sandboxId,
+    outputUrl: build.outputUrl,
     progress: {
       completed: build.progress.completed,
       total: build.progress.total,

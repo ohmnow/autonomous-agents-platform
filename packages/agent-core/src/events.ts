@@ -86,6 +86,7 @@ export interface ThinkingEvent extends BaseEvent {
 export type ActivityType =
   | 'thinking'
   | 'planning'
+  | 'implementing'
   | 'writing_code'
   | 'running_command'
   | 'running_tests'
@@ -200,6 +201,10 @@ export interface FeatureListItem {
   description: string;
   steps: string[];
   passes: boolean;
+  /** If true, must complete before non-blocking features can run in parallel */
+  blocking?: boolean;
+  /** Feature descriptions this feature depends on (for dependency ordering) */
+  dependsOn?: string[];
 }
 
 export interface FeatureListEvent extends BaseEvent {
@@ -351,6 +356,7 @@ export function getActivityLabel(activity: ActivityType): string {
   const labels: Record<ActivityType, string> = {
     thinking: 'Thinking...',
     planning: 'Planning next steps...',
+    implementing: 'Implementing feature...',
     writing_code: 'Writing code...',
     running_command: 'Running command...',
     running_tests: 'Running tests...',

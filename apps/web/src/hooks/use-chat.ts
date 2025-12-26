@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import type { Message } from '@/components/chat';
+import type { Message, Attachment } from '@/components/chat';
 import { 
   extractAppSpec, 
   extractAppDescription,
@@ -18,13 +18,33 @@ interface UseChatReturn {
   isLoading: boolean;
   streamingContent: string;
   error: string | null;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, files?: File[]) => Promise<void>;
   clearMessages: () => void;
   setMessages: (messages: Message[]) => void;
   setSavedSpec: (spec: string) => void;
   setSavedDescription: (description: ExtractedDescription | null) => void;
   savedSpec: string;
   savedDescription: ExtractedDescription | null;
+}
+
+/**
+ * Upload a file and return attachment metadata
+ */
+async function uploadFile(file: File): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(error.error || `Upload failed: ${response.status}`);
+  }
+
+  return response.json();
 }
 
 /**
@@ -43,26 +63,45 @@ export function useChat({ onSpecExtracted, onDescriptionExtracted }: UseChatOpti
   const [savedDescription, setSavedDescription] = useState<ExtractedDescription | null>(null);
 
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (!content.trim() || isLoading) return;
+    async (content: string, files?: File[]) => {
+      // Allow sending with just files (no text)
+      if (!content.trim() && (!files || files.length === 0)) return;
+      if (isLoading) return;
 
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content: content.trim(),
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
       setStreamingContent('');
       setError(null);
 
       try {
-        // Prepare messages for API (without timestamps and ids)
+        // Upload files first if provided
+        let attachments: Attachment[] | undefined;
+        if (files && files.length > 0) {
+          const uploadPromises = files.map((file) => uploadFile(file));
+          attachments = await Promise.all(uploadPromises);
+        }
+
+        const userMessage: Message = {
+          id: `user-${Date.now()}`,
+          role: 'user',
+          content: content.trim(),
+          timestamp: new Date(),
+          attachments,
+        };
+
+        setMessages((prev) => [...prev, userMessage]);
+
+        // Prepare messages for API
+        // For messages with attachments, we need to send them in a format the API understands
         const apiMessages = [...messages, userMessage].map((msg) => ({
           role: msg.role,
           content: msg.content,
+          attachments: msg.attachments?.map((att) => ({
+            id: att.id,
+            name: att.name,
+            type: att.type,
+            size: att.size,
+            storageKey: att.storageKey,
+          })),
         }));
 
         const response = await fetch('/api/chat', {

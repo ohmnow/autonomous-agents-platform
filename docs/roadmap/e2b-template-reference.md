@@ -113,38 +113,133 @@ async create(config: SandboxConfig): Promise<Sandbox> {
 
 ## Proposed Template Configurations
 
-### Template 1: Next.js Development Environment
+### Template 1: Next.js Fullstack (Zero-Config)
 
-**Purpose:** Pre-configured Next.js + Tailwind + shadcn for web app development
+**Purpose:** Pre-configured Next.js 15 + Tailwind + shadcn + Drizzle/SQLite + Auth.js for zero-config web app development
+
+> **Design Principle:** Everything works out of the box with zero external API keys.
 
 ```typescript
-// templates/nextjs-dev.ts
-import { Template, waitForURL } from 'e2b';
+// templates/nextjs-shadcn-fullstack.ts
+import { Template, waitForPort } from 'e2b';
 
-export const nextjsDevTemplate = Template()
+export const nextjsFullstackTemplate = Template()
   .fromNodeImage('21-slim')
-  .aptInstall(['curl', 'git', 'ripgrep'])
+  .aptInstall(['curl', 'git', 'ripgrep', 'chromium'])
+  .setEnvs({
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true',
+    PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium',
+  })
   .setWorkdir('/home/user')
-  // Create base Next.js project with all our standard deps
+  
+  // Create Next.js 15 project with App Router
   .runCmd([
-    'npx create-next-app@14.2.30 . --ts --tailwind --no-eslint --import-alias "@/*" --use-npm --no-app --no-src-dir',
-    'npx shadcn@2.1.7 init -d',
-    'npx shadcn@2.1.7 add --all',
+    'npx create-next-app@15 . --ts --tailwind --eslint --import-alias "@/*" --use-npm --app --src-dir',
   ])
-  // Install additional dependencies we commonly use
-  .runCmd('npm install lucide-react @tanstack/react-query zustand')
+  
+  // Install shadcn/ui with all components
+  .runCmd([
+    'npx shadcn@latest init -d -y',
+    'npx shadcn@latest add --all -y',
+  ])
+  
+  // Install zero-config stack dependencies
+  .runCmd(`npm install \\
+    drizzle-orm @libsql/client \\
+    next-auth@beta @auth/drizzle-adapter \\
+    zod @tanstack/react-query zustand \\
+    lucide-react class-variance-authority clsx tailwind-merge \\
+    resend @react-email/components \\
+    uploadthing @uploadthing/react \\
+    date-fns`)
+  
+  // Install dev dependencies  
+  .runCmd('npm install -D drizzle-kit puppeteer @types/node')
+  
+  // Create data directories
+  .runCmd('mkdir -p data public/uploads')
+  .runCmd('touch data/app.db data/emails.log public/uploads/.gitkeep')
+  
+  // Copy pre-configured lib files with graceful degradation
+  .copy('files/lib/', '/home/user/src/lib/')
+  .copy('files/drizzle.config.ts', '/home/user/drizzle.config.ts')
+  .copy('files/.env.example', '/home/user/.env.example')
+  .copy('files/template-manifest.json', '/home/user/.template-manifest.json')
+  
   // Development server running and ready
-  .setStartCmd('npm run dev', waitForURL('http://localhost:3000'));
+  .setStartCmd('npm run dev', waitForPort(3000));
+```
+
+**Template Manifest:**
+```json
+{
+  "templateId": "nextjs-shadcn-fullstack",
+  "templateVersion": "1.0.0",
+  "createdAt": "2024-12-11T00:00:00Z",
+  
+  "preConfigured": {
+    "framework": "nextjs",
+    "frameworkVersion": "15.0.0",
+    "language": "typescript",
+    
+    "features": [
+      "tailwind",
+      "shadcn-ui",
+      "drizzle",
+      "sqlite",
+      "auth-js",
+      "react-email",
+      "uploadthing",
+      "tanstack-query",
+      "zustand"
+    ],
+    
+    "zeroConfig": true,
+    "requiresKeys": false,
+    
+    "optionalKeys": [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET", 
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "RESEND_API_KEY",
+      "UPLOADTHING_SECRET",
+      "UPLOADTHING_APP_ID",
+      "DATABASE_URL"
+    ],
+    
+    "devServer": {
+      "running": true,
+      "port": 3000,
+      "command": "npm run dev"
+    },
+    
+    "projectStructure": {
+      "sourceDir": "src",
+      "pagesDir": "src/app",
+      "componentsDir": "src/components",
+      "libDir": "src/lib"
+    },
+    
+    "database": {
+      "orm": "drizzle",
+      "provider": "sqlite",
+      "initialized": true,
+      "connected": true,
+      "location": "./data/app.db"
+    }
+  }
+}
 ```
 
 **Build Script:**
 ```typescript
-// templates/build-nextjs.ts
+// templates/build-nextjs-fullstack.ts
 import { Template, defaultBuildLogger } from 'e2b';
-import { nextjsDevTemplate } from './nextjs-dev';
+import { nextjsFullstackTemplate } from './nextjs-shadcn-fullstack';
 
-await Template.build(nextjsDevTemplate, {
-  alias: 'nextjs-dev',
+await Template.build(nextjsFullstackTemplate, {
+  alias: 'nextjs-shadcn-fullstack',
   cpuCount: 4,
   memoryMB: 4096,
   onBuildLogs: defaultBuildLogger(),
@@ -173,12 +268,14 @@ export const claudeCodeTemplate = Template()
   });
 ```
 
-### Template 3: Full Development + Browser Testing
+### Template 3: Full Development + Browser Testing (Primary Template)
 
-**Purpose:** Complete environment with Puppeteer for our coding harness
+**Purpose:** Complete zero-config environment with Puppeteer for autonomous coding harness
+
+> This is the **primary template** for autonomous app building. It includes everything needed for a production-ready full-stack application with zero external dependencies.
 
 ```typescript
-// templates/coding-harness.ts
+// templates/coding-harness.ts (alias: nextjs-shadcn-fullstack)
 import { Template, waitForPort } from 'e2b';
 
 export const codingHarnessTemplate = Template()
@@ -206,15 +303,60 @@ export const codingHarnessTemplate = Template()
     PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium',
   })
   .setWorkdir('/home/user')
-  // Pre-create Next.js project structure
+  
+  // Create Next.js 15 project with App Router
   .runCmd([
-    'npx create-next-app@14.2.30 . --ts --tailwind --no-eslint --import-alias "@/*" --use-npm --no-app --no-src-dir',
-    'npx shadcn@2.1.7 init -d',
-    'npx shadcn@2.1.7 add --all',
-    'npm install lucide-react @tanstack/react-query zustand',
-    'npm install -D puppeteer puppeteer-mcp-server',
+    'npx create-next-app@15 . --ts --tailwind --eslint --import-alias "@/*" --use-npm --app --src-dir',
   ])
+  
+  // Install shadcn/ui with all components
+  .runCmd([
+    'npx shadcn@latest init -d -y',
+    'npx shadcn@latest add --all -y',
+  ])
+  
+  // Install zero-config stack (Drizzle, Auth.js, etc.)
+  .runCmd(`npm install \\
+    drizzle-orm @libsql/client \\
+    next-auth@beta @auth/drizzle-adapter \\
+    zod @tanstack/react-query zustand \\
+    lucide-react class-variance-authority clsx tailwind-merge \\
+    resend @react-email/components \\
+    uploadthing @uploadthing/react \\
+    date-fns`)
+  
+  // Install dev dependencies (including Puppeteer for testing)
+  .runCmd('npm install -D drizzle-kit puppeteer @types/node')
+  
+  // Create data directories for SQLite and local uploads
+  .runCmd('mkdir -p data public/uploads')
+  .runCmd('touch data/app.db data/emails.log public/uploads/.gitkeep')
+  
+  // Copy pre-configured lib files with graceful degradation utilities
+  .copy('files/lib/', '/home/user/src/lib/')
+  .copy('files/drizzle.config.ts', '/home/user/drizzle.config.ts')
+  .copy('files/.env.example', '/home/user/.env.example')
+  .copy('files/template-manifest.json', '/home/user/.template-manifest.json')
+  
   .setStartCmd('npm run dev', waitForPort(3000));
+```
+
+**Pre-configured Files Structure:**
+```
+files/
+├── lib/
+│   ├── db/
+│   │   ├── index.ts         # Drizzle client (SQLite/Turso fallback)
+│   │   └── schema.ts        # Base schema with users, sessions
+│   ├── auth.ts              # Auth.js config (credentials + optional OAuth)
+│   ├── email.ts             # Email utility (console/Resend fallback)
+│   ├── upload.ts            # Upload utility (local/UploadThing fallback)
+│   ├── utils.ts             # cn() helper
+│   └── validations/
+│       └── index.ts         # Common Zod schemas
+├── drizzle.config.ts        # Drizzle Kit configuration
+├── .env.example             # Environment variable documentation
+└── template-manifest.json   # Template metadata
 ```
 
 ### Template 4: Data Analysis Environment
@@ -674,36 +816,81 @@ The agent should "wake up, see its environment, look at its spec, and start buil
 
 Each template should include a manifest that describes what's pre-configured:
 
-```typescript
+```json
 // Template writes this during build
 // /home/user/.template-manifest.json
 {
-  "templateId": "nextjs-shadcn-dev",
+  "templateId": "nextjs-shadcn-fullstack",
   "templateVersion": "1.0.0",
-  "createdAt": "2025-12-11T...",
+  "createdAt": "2024-12-11T00:00:00Z",
+  
   "preConfigured": {
-    "framework": "next.js",
-    "version": "14.2.30",
+    "framework": "nextjs",
+    "frameworkVersion": "15.0.0",
+    "language": "typescript",
+    
     "features": [
-      "typescript",
       "tailwind",
-      "shadcn-ui"
+      "shadcn-ui",
+      "drizzle",
+      "sqlite",
+      "auth-js",
+      "react-email",
+      "uploadthing",
+      "tanstack-query",
+      "zustand"
     ],
-    "dependencies": [
-      "@tanstack/react-query",
-      "zustand",
-      "lucide-react"
+    
+    "zeroConfig": true,
+    "requiresKeys": false,
+    
+    "optionalKeys": [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET", 
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "RESEND_API_KEY",
+      "UPLOADTHING_SECRET",
+      "UPLOADTHING_APP_ID",
+      "DATABASE_URL"
     ],
+    
     "devServer": {
       "running": true,
       "port": 3000,
       "command": "npm run dev"
     },
-    "workdir": "/home/user",
+    
     "projectStructure": {
-      "pages": "src/pages",
-      "components": "src/components",
-      "styles": "src/styles"
+      "sourceDir": "src",
+      "pagesDir": "src/app",
+      "componentsDir": "src/components",
+      "libDir": "src/lib"
+    },
+    
+    "database": {
+      "orm": "drizzle",
+      "provider": "sqlite",
+      "initialized": true,
+      "connected": true,
+      "location": "./data/app.db"
+    },
+    
+    "auth": {
+      "provider": "auth-js",
+      "configured": true,
+      "sessionStrategy": "database"
+    },
+    
+    "gracefulDegradation": {
+      "email": {
+        "fallback": "file",
+        "upgradeTo": "resend"
+      },
+      "uploads": {
+        "fallback": "local",
+        "upgradeTo": "uploadthing"
+      }
     }
   }
 }
@@ -786,28 +973,62 @@ Your working directory is /home/user. You have access to:
 
 `;
 
-  // Add environment context
+  // Add environment context for zero-config template
   if (env.hasManifest) {
     return basePrompt + `
-## ENVIRONMENT ALREADY CONFIGURED
+## 🚀 PRE-CONFIGURED ZERO-CONFIG ENVIRONMENT
 
-This sandbox comes pre-configured with:
-- Framework: ${env.manifest.preConfigured.framework} ${env.manifest.preConfigured.version}
-- Features: ${env.manifest.preConfigured.features.join(', ')}
-- Pre-installed: ${env.manifest.preConfigured.dependencies.join(', ')}
-${env.devServerRunning ? '- Dev server: ALREADY RUNNING on port 3000' : ''}
+This sandbox is pre-configured with everything you need. **DO NOT** reinstall or recreate what's already set up.
 
-**DO NOT:**
-- Run npm init or create-next-app (already done)
-- Install packages listed above (already installed)
-- Start the dev server (${env.devServerRunning ? 'already running' : 'run with npm run dev'})
+### ✅ Zero-Config Stack (Works Immediately):
+- **Framework:** Next.js 15 with App Router
+- **UI:** Tailwind CSS 4 + shadcn/ui (all components)
+- **Database:** Drizzle ORM + SQLite at \`./data/app.db\`
+- **Auth:** Auth.js v5 with credentials provider + SQLite sessions
+- **Icons:** Lucide React
+- **State:** TanStack Query + Zustand
+- **Validation:** Zod
+${env.devServerRunning ? '- **Dev Server:** ALREADY RUNNING on port 3000' : ''}
 
-**START BY:**
-1. Read app_spec.txt to understand the requirements
-2. Create feature_list.json with ~${targetFeatures} test cases
-3. Start implementing features immediately
+### 📧 Graceful Degradation (Works Without API Keys):
+- **Email:** Logs to console + \`./data/emails.log\` (use \`lib/email.ts\`)
+- **File Uploads:** Saves to \`./public/uploads/\` (use \`lib/upload.ts\`)
+- **OAuth:** Credentials-only auth works; OAuth activates when keys provided
 
-The foundation is ready. Focus on building the application features.
+### Project Structure:
+\`\`\`
+src/
+├── app/              # Next.js App Router pages
+├── components/ui/    # shadcn components (pre-installed)
+├── lib/
+│   ├── db/           # Drizzle client + schema
+│   ├── auth.ts       # Auth.js configuration
+│   ├── email.ts      # Email with fallback
+│   ├── upload.ts     # Upload with fallback
+│   └── utils.ts      # cn() helper
+data/
+├── app.db            # SQLite database
+└── emails.log        # Dev email log
+\`\`\`
+
+### ⚠️ DO NOT:
+- Run \`npx create-next-app\` or any project scaffolding commands
+- Run \`npm install\` for packages listed above
+- Start the dev server (it's already running)
+- Install Prisma (we use Drizzle)
+
+### ✅ START BY:
+1. Read \`app_spec.txt\` to understand the requirements
+2. Create \`feature_list.json\` with ~${targetFeatures} test cases
+3. Start implementing features immediately - the foundation is ready!
+
+### 💡 Tips:
+- Use \`npx drizzle-kit push\` to apply schema changes
+- Import shadcn components from \`@/components/ui/\`
+- Use Server Actions for form handling (no API routes needed)
+- Email and uploads work immediately without API keys
+
+Focus your time on building application features, not setup.
 `;
   }
 

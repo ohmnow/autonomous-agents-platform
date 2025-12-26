@@ -54,6 +54,10 @@ export interface FeatureListItem {
   description: string;
   steps: string[];
   passes: boolean;
+  /** If true, must complete before non-blocking features can run in parallel */
+  blocking?: boolean;
+  /** Feature descriptions this feature depends on (for dependency ordering) */
+  dependsOn?: string[];
 }
 
 // =============================================================================
@@ -132,6 +136,9 @@ export interface UseEventStreamReturn {
   isLive: boolean;
   isComplete: boolean;
   
+  // Build status from SSE (for detecting review gate states)
+  buildStatus: string | null;
+  
   // Errors
   errors: Array<{ message: string; timestamp: string }>;
 }
@@ -158,6 +165,7 @@ const STRUCTURED_EVENT_TYPES = new Set([
   'test_run',
   'error',
   'progress',
+  'review_gate', // Emitted when build pauses for design/feature review
 ]);
 
 function isStructuredEventType(type: string): boolean {
@@ -165,10 +173,27 @@ function isStructuredEventType(type: string): boolean {
 }
 
 const activityPatterns: Array<{ pattern: RegExp; activity: string; detail?: (match: RegExpMatchArray) => string }> = [
+  // E2B sandbox lifecycle
+  { pattern: /Creating E2B sandbox/i, activity: 'Starting sandbox...', detail: () => 'Provisioning cloud environment' },
+  { pattern: /Sandbox created/i, activity: 'Sandbox ready', detail: () => 'Environment provisioned' },
+  { pattern: /Initializing sandbox/i, activity: 'Initializing sandbox...', detail: () => 'Setting up build environment' },
+  
+  // Design research (for UI projects)
+  { pattern: /Researching.*design.*references/i, activity: 'Researching design...', detail: () => 'Finding inspiration' },
+  { pattern: /Detected domain:/i, activity: 'Analyzing project...', detail: () => 'Detecting project type' },
+  { pattern: /Design research complete/i, activity: 'Design research complete', detail: () => 'Found reference designs' },
+  
+  // Planning phase - more specific patterns
+  { pattern: /PLANNING PHASE/i, activity: 'Planning phase...', detail: () => 'Generating feature list' },
+  { pattern: /Estimated complexity/i, activity: 'Analyzing complexity...', detail: () => 'Estimating project scope' },
+  { pattern: /UI project detected/i, activity: 'UI project detected', detail: () => 'Will create design system' },
+  { pattern: /Planning complete/i, activity: 'Planning complete', detail: () => 'Feature list created' },
+  
   // Feature list generation phases
   { pattern: /Creating.*feature.?list/i, activity: 'Generating feature list...', detail: () => 'This may take a few minutes' },
-  { pattern: /write_file:.*feature_list\.json/i, activity: 'Generating feature list...', detail: () => 'Creating test cases' },
-  { pattern: /\[TOOL\] write_file:.*feature_list/i, activity: 'Generating feature list...', detail: () => 'Creating test cases' },
+  { pattern: /write_file:.*feature_list\.json/i, activity: 'Writing feature list...', detail: () => 'Saving test cases' },
+  { pattern: /\[TOOL\] write_file:.*feature_list/i, activity: 'Writing feature list...', detail: () => 'Saving test cases' },
+  { pattern: /Feature list created: (\d+) features/i, activity: 'Feature list ready', detail: (m) => `${m[1]} features defined` },
   { pattern: /feature_list\.json/i, activity: 'Feature list ready', detail: () => 'Starting implementation' },
   
   // Planning and analysis
@@ -187,7 +212,7 @@ const activityPatterns: Array<{ pattern: RegExp; activity: string; detail?: (mat
   // File operations
   { pattern: /text_editor: Created (.+)/i, activity: 'Created file', detail: (m) => m[1] },
   { pattern: /text_editor: Modified (.+)/i, activity: 'Modified file', detail: (m) => m[1] },
-  { pattern: /\[TOOL\] write_file: (.+)/i, activity: 'Writing file', detail: (m) => m[1].split('/').pop() },
+  { pattern: /\[TOOL\] write_file: (.+)/i, activity: 'Writing file', detail: (m) => m[1].split('/').pop() || m[1] },
   
   // Commands
   { pattern: /bash: (.+)/i, activity: 'Running command...', detail: (m) => m[1].slice(0, 50) },
@@ -246,6 +271,9 @@ export function useEventStream({
   const hasEverConnectedRef = useRef(false);
   const maxReconnectAttempts = 5;
 
+  // Track build status from SSE for review gate detection
+  const [buildStatusFromSSE, setBuildStatusFromSSE] = useState<string | null>(null);
+
   // Parse logs/events from SSE stream
   const handleMessage = useCallback((data: Record<string, unknown>) => {
     // Handle different message types
@@ -255,6 +283,11 @@ export function useEventStream({
       const isLive = data.isLive as boolean ?? false;
       setServerIsLive(isLive);
       setConnectionState(isLive ? 'live' : 'historical');
+      
+      // Track build status from server - important for detecting review gate states
+      if (data.buildStatus) {
+        setBuildStatusFromSSE(data.buildStatus as string);
+      }
       
       // Use server-provided startedAt time for accurate elapsed calculation
       // This ensures elapsed time is correct even if client connects mid-build
@@ -483,7 +516,21 @@ export function useEventStream({
 
   // Progress calculation
   const progress = useMemo(() => {
-    // Try to get from progress logs first (most accurate)
+    // First, check if we have a feature_list event with actual total
+    // This is the most accurate source once the feature list is generated
+    const featureListEvent = events.findLast((e) => e.type === 'feature_list');
+    let actualTotal: number | undefined;
+    let completedFromFeatureList: number | undefined;
+    
+    if (featureListEvent) {
+      const eventFeatures = featureListEvent.features as FeatureListItem[] | undefined;
+      if (Array.isArray(eventFeatures) && eventFeatures.length > 0) {
+        actualTotal = eventFeatures.length;
+        completedFromFeatureList = eventFeatures.filter(f => f && f.passes).length;
+      }
+    }
+    
+    // Try to get from progress logs (includes completed count)
     const progressLog = events.findLast((e) => 
       ((e.message as string) || '').startsWith('Progress:')
     );
@@ -493,12 +540,24 @@ export function useEventStream({
       if (match) {
         const completed = parseInt(match[1]);
         const total = parseInt(match[2]);
+        // Use the larger of feature_list total or progress log total
+        // (feature_list is most accurate, but progress log may update during execution)
+        const finalTotal = actualTotal ?? total;
         return {
           completed,
-          total,
-          percentComplete: total > 0 ? Math.round((completed / total) * 100) : 0,
+          total: finalTotal,
+          percentComplete: finalTotal > 0 ? Math.round((completed / finalTotal) * 100) : 0,
         };
       }
+    }
+    
+    // If we have feature_list but no progress logs yet, use feature_list data
+    if (actualTotal !== undefined) {
+      return {
+        completed: completedFromFeatureList ?? 0,
+        total: actualTotal,
+        percentComplete: actualTotal > 0 ? Math.round(((completedFromFeatureList ?? 0) / actualTotal) * 100) : 0,
+      };
     }
     
     // Try to get from feature extraction
@@ -511,8 +570,19 @@ export function useEventStream({
       };
     }
     
-    // Fall back to initial progress from database (if provided)
-    if (initialProgress && initialProgress.total > 0) {
+    // Check if we're still in planning phase (feature list not yet generated)
+    // Don't use initialProgress.total (which is the estimated targetFeatureCount) 
+    // until we have actual feature list data
+    const hasAnyProgressData = events.some(e => 
+      e.type === 'feature_list' || 
+      ((e.message as string) || '').startsWith('Progress:') ||
+      ((e.message as string) || '').includes('features completed')
+    );
+    
+    // If we have initial progress from DB and either:
+    // - We have progress data from events, OR
+    // - The initial progress shows completed > 0 (resumed build)
+    if (initialProgress && initialProgress.total > 0 && (hasAnyProgressData || initialProgress.completed > 0)) {
       return {
         completed: initialProgress.completed,
         total: initialProgress.total,
@@ -520,7 +590,8 @@ export function useEventStream({
       };
     }
     
-    // Last resort: unknown progress
+    // Still in planning phase - return 0/0 to trigger "Analyzing..." UI
+    // This is better UX than showing "0/80" before feature list is generated
     return {
       completed: 0,
       total: 0,
@@ -646,9 +717,10 @@ export function useEventStream({
     if (featureListEvents.length === 0) return null;
     
     const latestEvent = featureListEvents[featureListEvents.length - 1];
-    const features = latestEvent.features as FeatureListItem[] | undefined;
+    const features = latestEvent?.features as FeatureListItem[] | undefined;
     
-    return features && Array.isArray(features) ? features : null;
+    // Ensure features is a valid array and not undefined/null
+    return features && Array.isArray(features) && features.length > 0 ? features : null;
   }, [events]);
 
   // Derived legacy state for backwards compatibility
@@ -674,6 +746,7 @@ export function useEventStream({
     isConnected,
     isLive,
     isComplete,
+    buildStatus: buildStatusFromSSE,
     errors,
   };
 }

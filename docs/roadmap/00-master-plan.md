@@ -29,9 +29,11 @@ An Autonomous App Factory where users define what they want through guided plann
 
 1. **Autonomy First** - Build while users do other things
 2. **Production Quality** - Not prototypes, but deployable apps
-3. **Zero Configuration** - Works out of the box with org-level keys
-4. **Bring Your Own Keys** - Users can swap in their own API keys later
+3. **Zero Configuration** - Works out of the box with NO external API keys required
+4. **Graceful Degradation** - Features upgrade automatically when keys are provided
 5. **Predictable Outcomes** - Consistent quality through standardized templates
+
+> **Design Principle:** Everything works out of the box with zero external API keys. Features gracefully upgrade when keys are provided.
 
 ---
 
@@ -61,34 +63,74 @@ An Autonomous App Factory where users define what they want through guided plann
 
 ## MVP Tech Stack Decision
 
-### Core Framework
-**Vite + React + TypeScript** with Next.js for full-stack capabilities
+### Stack Overview
+
+| Layer | Choice | Zero-Config? | Notes |
+|-------|--------|--------------|-------|
+| **Framework** | Next.js 15 (App Router) | ✅ | Server Actions, RSC, no API boilerplate |
+| **Language** | TypeScript (strict) | ✅ | End-to-end type safety |
+| **Styling** | Tailwind CSS 4 | ✅ | Utility-first, no build config |
+| **UI Components** | shadcn/ui (all) | ✅ | Copy-paste, no version lock-in |
+| **Icons** | Lucide React | ✅ | Tree-shakeable, consistent |
+| **ORM** | Drizzle | ✅ | No binary, edge-ready, SQL-like |
+| **Database** | SQLite (libSQL) | ✅ | Embedded, zero network config |
+| **Validation** | Zod | ✅ | Integrates with Server Actions + forms |
+| **Auth** | Auth.js v5 | ✅* | SQLite sessions, credentials provider |
+| **Email** | React Email + Resend | ⚡ | Console fallback → Resend with key |
+| **File Uploads** | UploadThing | ⚡ | Local `/uploads` → UploadThing with key |
+| **Client State** | Zustand | ✅ | Minimal, when RSC isn't enough |
+| **Server State** | TanStack Query v5 | ✅ | Mutations, optimistic updates |
+| **Date/Time** | date-fns | ✅ | Tree-shakeable, no moment.js bloat |
+
+**Legend:** ✅ = Works immediately | ⚡ = Graceful degradation (works locally, upgrades with key)
 
 ### Why This Stack?
-- **Vite**: Fast dev experience, modern tooling
-- **React**: Largest ecosystem, most AI training data
-- **Next.js**: SSR, API routes, edge functions, proven at scale
-- **TypeScript**: Type safety, better AI code generation
+- **Next.js 15**: Server Actions, App Router, RSC - no API boilerplate needed
+- **React 19**: Latest features, best AI training data
+- **TypeScript (strict)**: Type safety, better AI code generation
+- **Drizzle over Prisma**: No binary engine, faster cold starts, edge-ready
+- **SQLite (libSQL)**: Zero configuration, embedded database, Turso-compatible upgrade path
 
-### UI Layer
-- **Tailwind CSS**: Utility-first, predictable output
-- **shadcn/ui**: Accessible components, customizable
+### Key Architecture Decisions
 
-### Backend Services (Zero-Config with Org Keys)
+#### Why Drizzle over Prisma
 
-| Service | Purpose | Why This Choice |
-|---------|---------|-----------------|
-| **Clerk** | Authentication | Generous free tier, easy setup, org-level keys work |
-| **Neon** or **Turso** | Database | Serverless PostgreSQL/SQLite, free tiers, edge-ready |
-| **Cloudflare** | Hosting/Edge | Free tier, global edge, R2 storage |
-| **Vercel** | Alternative hosting | Seamless Next.js integration |
-| **Stripe** | Payments | Industry standard, test mode by default |
+| Factor | Prisma | Drizzle | Winner |
+|--------|--------|---------|--------|
+| Binary engine | Required (~15MB) | None | Drizzle |
+| Cold start | Slower (binary init) | Instant | Drizzle |
+| E2B container size | Larger | Smaller | Drizzle |
+| Edge runtime | Partial | Full | Drizzle |
+| Type inference | Generated | Native TS | Drizzle |
+| SQL familiarity | Abstracted | SQL-like | Drizzle |
 
-### The "Bring Your Own Keys" Flow
-1. App builds with our org-level keys (works immediately)
-2. User downloads/deploys the app
-3. UI prompts user to add their own keys for production
-4. Keys stored in environment variables, not code
+**Bottom line:** Drizzle is faster to install, faster to start, and has no binary dependencies—critical for autonomous container builds.
+
+#### Why SQLite (libSQL) as Default
+
+1. **Zero configuration** — No connection strings, no external services
+2. **Embedded** — Database file lives in the project
+3. **Fast** — No network latency for reads/writes
+4. **Turso-compatible** — Same libSQL, easy upgrade to edge replication
+5. **Portable** — User can download their entire database
+
+#### Why Auth.js v5 with Credentials
+
+Most auth providers (Clerk, Auth0, Supabase Auth) require API keys. Auth.js v5 can work **immediately** with:
+1. **SQLite session storage** — No Redis, no external DB
+2. **Credentials provider** — Email/password works without OAuth keys
+3. **Upgradeable** — Add Google/GitHub OAuth when user provides keys
+
+### Graceful Degradation Pattern
+
+Services work locally without keys, then upgrade when keys are provided:
+
+| Service | Zero-Config Mode | With API Key |
+|---------|------------------|--------------|
+| **Email** | Console log + file | Resend delivery |
+| **File Uploads** | Local `/uploads` folder | UploadThing cloud |
+| **Auth** | Credentials only | + OAuth providers |
+| **Database** | SQLite file | Turso edge replication |
 
 ---
 
@@ -103,14 +145,15 @@ An Autonomous App Factory where users define what they want through guided plann
 - Dynamic template selection
 - Context-aware agent prompts
 
-### Phase 2: Zero-Config Services 📋
-**Goal:** Apps that work immediately with org-level API keys
+### Phase 2: Graceful Degradation Services 📋
+**Goal:** Apps that work immediately with zero API keys, upgrade when keys provided
 
 - [Phase 2 Plan →](./02-phase-zero-config-services.md)
-- Clerk integration (auth works out of box)
-- Database setup (Neon/Turso auto-provisioning)
-- Environment variable injection
-- "Bring Your Own Keys" UI component
+- Auth.js v5 with credentials (works without OAuth keys)
+- SQLite database (embedded, zero config)
+- Email logging fallback (console + file, upgrades to Resend)
+- File upload fallback (local storage, upgrades to UploadThing)
+- "Add Your API Keys" UI component for production upgrades
 
 ### Phase 3: Build Quality & Speed 📋
 **Goal:** Faster, more reliable autonomous builds
@@ -196,21 +239,34 @@ An Autonomous App Factory where users define what they want through guided plann
         ▼                    ▼                    ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    External Services                         │
-│  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌───────┐ │
-│  │ Clerk  │  │  Neon  │  │Cloudfl.│  │ Stripe │  │  MCP  │ │
-│  │ (Auth) │  │  (DB)  │  │(Deploy)│  │(Paymnt)│  │(Tools)│ │
-│  └────────┘  └────────┘  └────────┘  └────────┘  └───────┘ │
+│  ┌─────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌───────┐ │
+│  │ Auth.js │  │ SQLite │  │Cloudfl.│  │ Resend │  │  MCP  │ │
+│  │ (Auth)  │  │  (DB)  │  │(Deploy)│  │(Email) │  │(Tools)│ │
+│  └─────────┘  └────────┘  └────────┘  └────────┘  └───────┘ │
+│                   ↓            ↓            ↓                │
+│              [Zero-Config: Works without external services]  │
+│              [Upgrades: Turso, Vercel, UploadThing, etc.]   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
+## Stack Decisions (Resolved)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Database** | SQLite (libSQL) | Zero config, embedded, Turso upgrade path |
+| **ORM** | Drizzle | No binary, edge-ready, faster cold starts |
+| **Auth** | Auth.js v5 | Works without OAuth keys, SQLite sessions |
+| **Email** | React Email + Resend | Console fallback when no key |
+| **Uploads** | UploadThing | Local folder fallback when no key |
+| **Deployment** | Cloudflare/Vercel | Both supported, user choice |
+
 ## Open Decisions
 
-1. **Database Choice**: Neon (PostgreSQL) vs Turso (SQLite) vs Supabase?
-2. **Deployment Default**: Cloudflare Pages vs Vercel?
-3. **Org Key Management**: How to securely store and inject org-level keys?
-4. **Billing Model**: How does "bring your own keys" affect our pricing?
+1. **Deployment Default**: Cloudflare Pages vs Vercel?
+2. **System Key Injection**: How to inject keys for feature verification during builds?
+3. **Billing Model**: Usage-based vs subscription for autonomous builds?
 
 ---
 
@@ -229,3 +285,4 @@ An Autonomous App Factory where users define what they want through guided plann
 - [E2B Template Reference](./e2b-template-reference.md) - Research on E2B template capabilities
 - [Phase 1: Template Foundation](./01-phase-template-foundation.md) - First implementation phase
 - [Wizard Configuration](../apps/web/src/lib/wizard/config.ts) - Current wizard options
+

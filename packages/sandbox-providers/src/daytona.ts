@@ -60,6 +60,18 @@ class DaytonaSandboxWrapper implements Sandbox {
       this.outputListeners.delete(callback);
     };
   }
+
+  getHost(_port: number): string {
+    throw new Error('Daytona provider not yet implemented');
+  }
+
+  async isRunning(): Promise<boolean> {
+    return this.status === 'running';
+  }
+
+  async setTimeout(_timeoutMs: number): Promise<void> {
+    throw new Error('Daytona provider not yet implemented');
+  }
 }
 
 /**

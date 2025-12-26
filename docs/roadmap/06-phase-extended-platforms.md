@@ -122,3 +122,6 @@ Each platform follows the pattern:
 | Chrome Extension | ⬜ | ⬜ | ⬜ |
 | Mobile (Expo) | ⬜ | ⬜ | ⬜ |
 | Desktop (Tauri) | ⬜ | ⬜ | ⬜ |
+
+
+

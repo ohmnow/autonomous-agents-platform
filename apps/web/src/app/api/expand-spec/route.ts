@@ -31,13 +31,19 @@ export async function POST(request: Request) {
       return new Response('Invalid or missing appDescription', { status: 400 });
     }
 
-    // Check for API key
+    // Check for authentication (OAuth token preferred, API key as fallback)
+    // Supports both ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN for flexibility
+    const authToken = process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return new Response('Anthropic API key not configured', { status: 500 });
+    
+    if (!authToken && !apiKey) {
+      return new Response('Anthropic authentication not configured', { status: 500 });
     }
 
-    const anthropic = new Anthropic({ apiKey });
+    const anthropic = new Anthropic({
+      apiKey: apiKey || undefined,
+      authToken: authToken || undefined,
+    });
 
     // Build the user message with optional complexity override
     let userMessage = `Expand this App Description into a full XML specification:\n\n${appDescription}`;
@@ -54,8 +60,8 @@ export async function POST(request: Request) {
 
     // Create streaming response for the expansion
     const stream = await anthropic.messages.stream({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 32768, // Full specs can be large
+      model: 'claude-opus-4-5', // Opus 4.5 for highest quality spec generation
+      max_tokens: 64000, // Maximum tokens for Opus 4.5 (supports 400+ features)
       system: EXPANSION_SYSTEM_PROMPT,
       messages: [
         { role: 'user', content: userMessage },

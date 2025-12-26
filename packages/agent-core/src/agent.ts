@@ -435,7 +435,12 @@ export async function runAgentInSandbox(options: SandboxAgentOptions): Promise<v
     // Execute agent command in sandbox
     // Note: In a real implementation, this would run the Claude agent SDK
     // inside the sandbox environment using the sandbox.exec method
-    const agentCommand = `ANTHROPIC_API_KEY="${process.env.ANTHROPIC_API_KEY}" npx @anthropic-ai/claude-agent-sdk query "${prompt.replace(/"/g, '\\"')}"`;
+    // Supports both OAuth token (preferred) and API key authentication
+    const authToken = process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const authEnv = authToken 
+      ? `ANTHROPIC_AUTH_TOKEN="${authToken}" CLAUDE_CODE_OAUTH_TOKEN="${authToken}"`
+      : `ANTHROPIC_API_KEY="${process.env.ANTHROPIC_API_KEY}"`;
+    const agentCommand = `${authEnv} npx @anthropic-ai/claude-agent-sdk query "${prompt.replace(/"/g, '\\"')}"`;
 
     try {
       // Stream the agent output

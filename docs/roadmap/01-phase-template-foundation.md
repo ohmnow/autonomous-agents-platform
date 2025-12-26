@@ -56,19 +56,29 @@ With pre-configured templates, steps 2-4 are eliminated, and the dev server is a
 
 ### 2. Primary Template: `nextjs-shadcn-fullstack`
 
+**Design Principle:** Everything works out of the box with zero external API keys.
+
 **Pre-installed:**
-- Next.js 14.x with TypeScript
-- Tailwind CSS
+- Next.js 15.x with TypeScript (strict)
+- React 19
+- Tailwind CSS 4
 - shadcn/ui (all components)
-- Lucide icons
-- React Query, Zustand
-- Prisma (configured, no DB connection)
+- Lucide React icons
+- Drizzle ORM + libSQL client
+- Auth.js v5 with Drizzle adapter
+- React Email + Resend (with fallback)
+- UploadThing (with local fallback)
+- TanStack Query v5, Zustand
+- Zod validation
+- date-fns
 
 **Pre-configured:**
 - Dev server running on port 3000
+- SQLite database initialized (`./data/app.db`)
 - TypeScript strict mode
 - ESLint + Prettier
-- Standard project structure
+- Standard project structure with `src/` directory
+- Graceful degradation utilities for email/uploads
 
 **Template Definition:**
 ```typescript
@@ -83,24 +93,121 @@ export const template = Template()
     PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium',
   })
   .setWorkdir('/home/user')
-  // Create Next.js project
+  
+  // Create Next.js 15 project with App Router
   .runCmd([
-    'npx create-next-app@14.2.30 . --ts --tailwind --eslint --import-alias "@/*" --use-npm --app --src-dir',
+    'npx create-next-app@15 . --ts --tailwind --eslint --import-alias "@/*" --use-npm --app --src-dir',
   ])
-  // Install shadcn
+  
+  // Install shadcn/ui
   .runCmd([
     'npx shadcn@latest init -d -y',
     'npx shadcn@latest add --all -y',
   ])
-  // Install additional deps
-  .runCmd('npm install lucide-react @tanstack/react-query zustand prisma @prisma/client')
-  .runCmd('npm install -D puppeteer')
-  // Initialize Prisma (no DB connection yet)
-  .runCmd('npx prisma init --datasource-provider sqlite')
+  
+  // Install core dependencies (zero-config stack)
+  .runCmd(`npm install \\
+    drizzle-orm @libsql/client \\
+    next-auth@beta @auth/drizzle-adapter \\
+    zod @tanstack/react-query zustand \\
+    lucide-react class-variance-authority clsx tailwind-merge \\
+    resend @react-email/components \\
+    uploadthing @uploadthing/react \\
+    date-fns`)
+  
+  // Install dev dependencies
+  .runCmd('npm install -D drizzle-kit puppeteer @types/node')
+  
+  // Create data directory for SQLite
+  .runCmd('mkdir -p data public/uploads')
+  
+  // Initialize SQLite database
+  .runCmd('touch data/app.db')
+  
   // Write template manifest
   .copy('files/template-manifest.json', '/home/user/.template-manifest.json')
+  
+  // Copy pre-configured lib files (db, auth, email, upload with fallbacks)
+  .copy('files/lib/', '/home/user/src/lib/')
+  
+  // Copy drizzle config
+  .copy('files/drizzle.config.ts', '/home/user/drizzle.config.ts')
+  
+  // Copy .env.example
+  .copy('files/.env.example', '/home/user/.env.example')
+  
   // Start dev server (will be running when sandbox spawns)
   .setStartCmd('npm run dev', waitForPort(3000));
+```
+
+**Key Pre-configured Files:**
+
+```typescript
+// templates/nextjs-shadcn-fullstack/files/lib/db/index.ts
+import { drizzle } from 'drizzle-orm/libsql';
+import { createClient } from '@libsql/client';
+
+// Zero-config: Works immediately with local SQLite
+const client = createClient({ 
+  url: process.env.DATABASE_URL || 'file:./data/app.db'
+});
+
+export const db = drizzle(client);
+```
+
+```typescript
+// templates/nextjs-shadcn-fullstack/files/lib/email.ts
+import { Resend } from 'resend';
+import fs from 'fs/promises';
+
+const resend = process.env.RESEND_API_KEY 
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
+
+export async function sendEmail(options: EmailOptions) {
+  if (resend) {
+    // Production: Send via Resend
+    return resend.emails.send(options);
+  } else {
+    // Development: Log to console + write to file
+    console.log('📧 EMAIL (dev mode):', {
+      to: options.to,
+      subject: options.subject,
+    });
+    
+    await fs.appendFile(
+      './data/emails.log',
+      JSON.stringify({ ...options, timestamp: new Date() }) + '\n'
+    );
+    
+    return { id: `dev-${Date.now()}` };
+  }
+}
+```
+
+```typescript
+// templates/nextjs-shadcn-fullstack/files/lib/upload.ts
+import fs from 'fs/promises';
+import path from 'path';
+
+export async function uploadFile(file: File): Promise<UploadResult> {
+  if (process.env.UPLOADTHING_SECRET) {
+    // Production: Use UploadThing
+    return uploadToUploadThing(file);
+  } else {
+    // Development: Local file storage
+    const filename = `${Date.now()}-${file.name}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    await fs.writeFile(path.join('./public/uploads', filename), buffer);
+    
+    return {
+      url: `/uploads/${filename}`,
+      key: filename,
+      name: file.name,
+      size: file.size,
+    };
+  }
+}
 ```
 
 ### 3. Template Manifest Schema
@@ -117,12 +224,14 @@ export interface TemplateManifest {
     frameworkVersion: string;
     language: 'typescript' | 'javascript';
     
-    features: string[];  // e.g., ['tailwind', 'shadcn', 'prisma']
+    features: string[];  // e.g., ['tailwind', 'shadcn-ui', 'drizzle', 'auth-js']
     
-    dependencies: {
-      production: string[];
-      development: string[];
-    };
+    // Zero-config indicator
+    zeroConfig: boolean;
+    requiresKeys: boolean;
+    
+    // Optional keys that enhance functionality
+    optionalKeys: string[];  // e.g., ['RESEND_API_KEY', 'UPLOADTHING_SECRET']
     
     devServer?: {
       running: boolean;
@@ -138,17 +247,111 @@ export interface TemplateManifest {
     };
     
     database?: {
-      orm: 'prisma' | 'drizzle' | 'none';
+      orm: 'drizzle' | 'prisma' | 'none';
       provider: 'sqlite' | 'postgresql' | 'mysql' | 'none';
       initialized: boolean;
       connected: boolean;
+      location?: string;       // e.g., './data/app.db'
     };
     
     auth?: {
-      provider: 'clerk' | 'nextauth' | 'supabase' | 'none';
+      provider: 'auth-js' | 'clerk' | 'supabase' | 'none';
       configured: boolean;
+      sessionStrategy: 'database' | 'jwt';
+    };
+    
+    // Graceful degradation services
+    gracefulDegradation?: {
+      email: {
+        fallback: 'console' | 'file';
+        upgradeTo: 'resend' | 'sendgrid';
+      };
+      uploads: {
+        fallback: 'local';
+        upgradeTo: 'uploadthing' | 's3';
+      };
     };
   };
+}
+```
+
+**Example Manifest:**
+
+```json
+{
+  "templateId": "nextjs-shadcn-fullstack",
+  "templateVersion": "1.0.0",
+  "createdAt": "2024-12-11T00:00:00Z",
+  
+  "preConfigured": {
+    "framework": "nextjs",
+    "frameworkVersion": "15.0.0",
+    "language": "typescript",
+    
+    "features": [
+      "tailwind",
+      "shadcn-ui",
+      "drizzle",
+      "sqlite",
+      "auth-js",
+      "react-email",
+      "uploadthing",
+      "tanstack-query",
+      "zustand"
+    ],
+    
+    "zeroConfig": true,
+    "requiresKeys": false,
+    
+    "optionalKeys": [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET", 
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "RESEND_API_KEY",
+      "UPLOADTHING_SECRET",
+      "UPLOADTHING_APP_ID",
+      "DATABASE_URL"
+    ],
+    
+    "devServer": {
+      "running": true,
+      "port": 3000,
+      "command": "npm run dev"
+    },
+    
+    "projectStructure": {
+      "sourceDir": "src",
+      "pagesDir": "src/app",
+      "componentsDir": "src/components",
+      "libDir": "src/lib"
+    },
+    
+    "database": {
+      "orm": "drizzle",
+      "provider": "sqlite",
+      "initialized": true,
+      "connected": true,
+      "location": "./data/app.db"
+    },
+    
+    "auth": {
+      "provider": "auth-js",
+      "configured": true,
+      "sessionStrategy": "database"
+    },
+    
+    "gracefulDegradation": {
+      "email": {
+        "fallback": "file",
+        "upgradeTo": "resend"
+      },
+      "uploads": {
+        "fallback": "local",
+        "upgradeTo": "uploadthing"
+      }
+    }
+  }
 }
 ```
 
@@ -170,7 +373,7 @@ export interface EnvironmentContext {
   
   // File system state
   hasPackageJson: boolean;
-  hasPrismaSchema: boolean;
+  hasDrizzleSchema: boolean;
   existingDirectories: string[];
   
   // Process state
@@ -186,7 +389,7 @@ export async function discoverEnvironment(
     devServerRunning: false,
     devServerPort: null,
     hasPackageJson: false,
-    hasPrismaSchema: false,
+    hasDrizzleSchema: false,
     existingDirectories: [],
     runningProcesses: [],
   };
@@ -211,12 +414,12 @@ export async function discoverEnvironment(
     // No package.json
   }
 
-  // 3. Check for Prisma schema
+  // 3. Check for Drizzle schema
   try {
-    await sandbox.readFile('/home/user/prisma/schema.prisma');
-    context.hasPrismaSchema = true;
+    await sandbox.readFile('/home/user/src/lib/db/schema.ts');
+    context.hasDrizzleSchema = true;
   } catch {
-    // No Prisma schema
+    // No Drizzle schema
   }
 
   // 4. Check directory structure
@@ -267,33 +470,66 @@ Your working directory is /home/user. You have access to:
     const m = env.manifest.preConfigured;
     
     return basePrompt + `
-## 🚀 PRE-CONFIGURED ENVIRONMENT
+## 🚀 PRE-CONFIGURED ZERO-CONFIG ENVIRONMENT
 
 This sandbox is pre-configured with everything you need. **DO NOT** reinstall or recreate what's already set up.
 
-### Already Installed:
-- **Framework:** ${m.framework} ${m.frameworkVersion}
-- **Features:** ${m.features.join(', ')}
-- **Dependencies:** ${m.dependencies.production.slice(0, 10).join(', ')}${m.dependencies.production.length > 10 ? '...' : ''}
+### ✅ Zero-Config Stack (Works Immediately):
+- **Framework:** Next.js ${m.frameworkVersion} with App Router
+- **UI:** Tailwind CSS 4 + shadcn/ui (all components)
+- **Database:** Drizzle ORM + SQLite at \`./data/app.db\`
+- **Auth:** Auth.js v5 with credentials provider + SQLite sessions
+- **Icons:** Lucide React
+- **State:** TanStack Query + Zustand
+- **Validation:** Zod
 ${m.devServer?.running ? `- **Dev Server:** ALREADY RUNNING on port ${m.devServer.port}` : ''}
-${m.database?.initialized ? `- **Database:** ${m.database.orm} with ${m.database.provider} (initialized, not connected)` : ''}
+
+### 📧 Graceful Degradation (Works Without API Keys):
+- **Email:** Logs to console + \`./data/emails.log\` (use \`lib/email.ts\`)
+- **File Uploads:** Saves to \`./public/uploads/\` (use \`lib/upload.ts\`)
+- **OAuth:** Credentials-only auth works; OAuth activates when keys provided
 
 ### Project Structure:
-- Source: \`${m.projectStructure.sourceDir}/\`
-- Components: \`${m.projectStructure.componentsDir}/\`
-- Utilities: \`${m.projectStructure.libDir}/\`
-${m.projectStructure.pagesDir ? `- Pages/Routes: \`${m.projectStructure.pagesDir}/\`` : ''}
+\`\`\`
+src/
+├── app/              # Next.js App Router pages
+├── components/
+│   ├── ui/           # shadcn components (pre-installed)
+│   ├── forms/        # Form components
+│   └── layout/       # Layout components
+├── lib/
+│   ├── db/           # Drizzle client + schema
+│   ├── auth.ts       # Auth.js configuration
+│   ├── email.ts      # Email with fallback
+│   ├── upload.ts     # Upload with fallback
+│   └── utils.ts      # cn() helper
+├── hooks/            # Custom React hooks
+├── stores/           # Zustand stores
+└── types/            # TypeScript types
+data/
+├── app.db            # SQLite database
+└── emails.log        # Dev email log
+public/
+└── uploads/          # Local upload storage
+\`\`\`
 
 ### ⚠️ DO NOT:
 - Run \`npx create-next-app\` or any project scaffolding commands
 - Run \`npm install\` for packages listed above
 - Start the dev server (it's already running)
 - Recreate directories that exist
+- Install Prisma (we use Drizzle)
 
 ### ✅ START BY:
 1. Read \`app_spec.txt\` to understand the requirements
 2. Create \`feature_list.json\` with ~${targetFeatures} test cases
 3. **Immediately begin implementing features** - the foundation is ready!
+
+### 💡 Tips:
+- Use \`npx drizzle-kit push\` to apply schema changes
+- Import shadcn components from \`@/components/ui/\`
+- Use Server Actions for form handling (no API routes needed)
+- Email and uploads work immediately without API keys
 
 Focus your time on building application features, not setup.
 `;
@@ -516,4 +752,4 @@ async function runRealBuild(
 
 ## Next Phase
 
-Once Phase 1 is complete, proceed to [Phase 2: Zero-Config Services](./02-phase-zero-config-services.md) to add Clerk auth and database auto-provisioning.
+Once Phase 1 is complete, proceed to [Phase 2: Graceful Degradation Services](./02-phase-zero-config-services.md) to refine the local fallback patterns and optional key upgrades.

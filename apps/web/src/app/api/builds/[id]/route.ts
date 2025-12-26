@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { stopBuild } from '@/lib/sandbox/build-runner';
+import { stopBuild, getCheckpointData } from '@/lib/sandbox/build-runner';
 import { ensureUser } from '@/lib/auth';
 import {
   getBuildById,
@@ -93,13 +93,38 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Handle cancellation - stop the sandbox
+    // Handle cancellation - stop the sandbox and SAVE ARTIFACTS
+    let artifactKey: string | undefined;
     if (status === 'CANCELLED' && build.status === 'RUNNING') {
-      await stopBuild(id);
-    }
-
-    // Update the build
-    if (status) {
+      const stopResult = await stopBuild(id);
+      artifactKey = stopResult.artifactKey;
+      
+      // Get checkpoint data if available
+      const checkpoint = getCheckpointData(id);
+      
+      console.log(`[stop] Stop result: success=${stopResult.success}, artifactKey=${artifactKey}`);
+      console.log(`[stop] Checkpoint data: ${checkpoint ? 'available' : 'none'}`);
+      
+      // Update with artifact key and checkpoint data so build can be resumed
+      const updateData: {
+        status: BuildStatus;
+        artifactKey?: string;
+        checkpointData?: Record<string, unknown>;
+      } = {
+        status: 'CANCELLED' as BuildStatus,
+      };
+      
+      if (artifactKey) {
+        updateData.artifactKey = artifactKey;
+      }
+      
+      if (checkpoint?.checkpointData) {
+        updateData.checkpointData = checkpoint.checkpointData;
+      }
+      
+      build = await updateBuild(id, updateData);
+    } else if (status) {
+      // Other status updates
       build = await updateBuild(id, { status: status as BuildStatus });
     }
 

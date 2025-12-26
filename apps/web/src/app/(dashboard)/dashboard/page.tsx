@@ -10,16 +10,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ensureUser } from '@/lib/auth';
+import { extractAppName } from '@/lib/utils/extract-spec';
 import { listBuilds, countBuilds, listAppSpecs } from '@repo/database';
-
-// Extract app name from spec
-function extractAppName(spec: string): string {
-  const match = spec.match(/^#\s+(.+)$/m);
-  if (match) {
-    return match[1].trim();
-  }
-  return 'Untitled Build';
-}
 
 function getStatusBadge(status: string) {
   switch (status) {
@@ -97,7 +89,7 @@ export default async function DashboardPage() {
   // Transform builds for display
   const displayBuilds = recentBuilds.map((build) => ({
     id: build.id,
-    name: extractAppName(build.appSpec),
+    name: extractAppName(build.appSpec) || 'Untitled Build',
     status: build.status,
     createdAt: new Date(build.createdAt),
     progress: (build.progress as { completed: number; total: number }) || { completed: 0, total: 0 },

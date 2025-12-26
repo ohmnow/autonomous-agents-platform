@@ -47,6 +47,29 @@ export interface Sandbox {
 
   /** Subscribe to agent output */
   onOutput(callback: (data: AgentOutput) => void): () => void;
+
+  /**
+   * Get the public host/URL for a port exposed in the sandbox.
+   * Use this to access web servers running inside the sandbox.
+   * 
+   * @param port - The port number to get the host for
+   * @returns The public host address (e.g., "abc123-3000.e2b.dev")
+   */
+  getHost(port: number): string;
+
+  /**
+   * Check if the sandbox is still running/alive.
+   * 
+   * @returns True if sandbox is running, false otherwise
+   */
+  isRunning(): Promise<boolean>;
+
+  /**
+   * Extend the sandbox timeout.
+   * 
+   * @param timeoutMs - New timeout in milliseconds from now
+   */
+  setTimeout(timeoutMs: number): Promise<void>;
 }
 
 export interface SandboxConfig {

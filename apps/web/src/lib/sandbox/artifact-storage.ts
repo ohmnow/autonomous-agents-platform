@@ -255,3 +255,110 @@ export async function deleteArtifacts(buildId: string): Promise<void> {
   const artifactKey = getArtifactKey(buildId);
   await storage.delete(artifactKey);
 }
+
+/**
+ * Download artifact ZIP file content
+ *
+ * @param buildId - The build ID
+ * @returns The ZIP file as a Buffer
+ */
+export async function downloadArtifacts(buildId: string): Promise<Buffer> {
+  if (!isStorageConfigured()) {
+    throw new Error('Storage is not configured. Set S3_* environment variables.');
+  }
+
+  const storage = getStorage();
+  const artifactKey = getArtifactKey(buildId);
+  const result = await storage.download(artifactKey);
+  return result.data;
+}
+
+/**
+ * Restore artifacts to a sandbox
+ * Downloads the artifact ZIP and extracts it to the sandbox
+ *
+ * @param buildId - The build ID to restore from
+ * @param sandbox - The sandbox to restore to
+ * @param targetPath - Where to extract files (default: /home/user)
+ * @returns True if restoration succeeded
+ */
+export async function restoreArtifactsToSandbox(
+  buildId: string,
+  sandbox: Sandbox,
+  targetPath: string = '/home/user'
+): Promise<boolean> {
+  console.log(`[artifact-storage] Restoring artifacts for build ${buildId} to ${targetPath}`);
+  
+  // Download the ZIP file
+  const zipBuffer = await downloadArtifacts(buildId);
+  console.log(`[artifact-storage] Downloaded artifact: ${zipBuffer.length} bytes`);
+  
+  // Write ZIP to sandbox using base64 encoding (writeFile is for text, not binary)
+  const tempZipPath = '/tmp/artifacts.zip';
+  const base64Content = zipBuffer.toString('base64');
+  
+  // Write base64 content to a temp file, then decode it
+  const tempBase64Path = '/tmp/artifacts.b64';
+  await sandbox.writeFile(tempBase64Path, base64Content);
+  
+  // Decode base64 to binary ZIP using Python (more reliable than base64 command)
+  const decodeResult = await sandbox.exec(`python3 -c "
+import base64
+with open('${tempBase64Path}', 'r') as f:
+    b64_data = f.read()
+with open('${tempZipPath}', 'wb') as f:
+    f.write(base64.b64decode(b64_data))
+print('Decoded successfully')
+"`);
+  
+  if (decodeResult.exitCode !== 0) {
+    throw new Error(`Failed to decode ZIP file: ${decodeResult.stderr}`);
+  }
+  
+  // Clean up base64 file
+  await sandbox.exec(`rm -f ${tempBase64Path}`);
+  console.log(`[artifact-storage] Wrote ZIP to sandbox: ${tempZipPath}`);
+  
+  // Ensure target directory exists
+  await sandbox.exec(`mkdir -p ${targetPath}`);
+  
+  // Extract the ZIP file
+  // Use -o to overwrite existing files without prompting
+  const extractResult = await sandbox.exec(`cd ${targetPath} && unzip -o ${tempZipPath}`);
+  
+  if (extractResult.exitCode !== 0) {
+    console.error(`[artifact-storage] Unzip failed: ${extractResult.stderr}`);
+    
+    // Try alternative extraction with Python if unzip fails
+    const pythonResult = await sandbox.exec(`
+      cd ${targetPath} && python3 -c "
+import zipfile
+import sys
+try:
+    with zipfile.ZipFile('${tempZipPath}', 'r') as zip_ref:
+        zip_ref.extractall('.')
+    print('Extraction successful')
+except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
+"
+    `);
+    
+    if (pythonResult.exitCode !== 0) {
+      console.error(`[artifact-storage] Python extraction also failed: ${pythonResult.stderr}`);
+      throw new Error(`Failed to extract artifacts: ${pythonResult.stderr}`);
+    }
+    console.log(`[artifact-storage] Extracted using Python zipfile`);
+  } else {
+    console.log(`[artifact-storage] Extracted using unzip command`);
+  }
+  
+  // Clean up temp file
+  await sandbox.exec(`rm -f ${tempZipPath}`);
+  
+  // Verify extraction by listing files
+  const lsResult = await sandbox.exec(`ls -la ${targetPath} | head -20`);
+  console.log(`[artifact-storage] Restored files:\n${lsResult.stdout}`);
+  
+  return true;
+}

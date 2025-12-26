@@ -1,4 +1,4 @@
-export { MessageBubble, type Message } from './message-bubble';
+export { MessageBubble, type Message, type Attachment } from './message-bubble';
 export { TypingIndicator } from './typing-indicator';
 export { SpecPreview } from './spec-preview';
 export { ChatInput } from './chat-input';

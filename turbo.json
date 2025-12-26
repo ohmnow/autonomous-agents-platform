@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**"]
     },
     "dev": {
       "cache": false,
@@ -21,6 +21,11 @@
     },
     "clean": {
       "cache": false
+    },
+    "docs:api": {
+      "dependsOn": ["^build"],
+      "outputs": ["docs-site/docs/api/**"],
+      "inputs": ["packages/*/src/**/*.ts", "typedoc.json"]
     }
   }
 }

@@ -8,6 +8,16 @@ const nextConfig: NextConfig = {
     },
   },
   
+  // Transpile workspace packages for proper bundling with Turbopack
+  transpilePackages: ['@repo/database', '@repo/agent-core', '@repo/sandbox-providers', '@repo/storage'],
+  
+  // Externalize Prisma to fix Turbopack bundling issues
+  // See: https://github.com/prisma/prisma/issues/21505
+  serverExternalPackages: ['@prisma/client', 'prisma'],
+  
+  // Output standalone build for Docker deployments
+  output: 'standalone',
+  
   // Security headers
   async headers() {
     return [

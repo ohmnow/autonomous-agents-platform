@@ -143,6 +143,37 @@ class E2BSandboxWrapper implements Sandbox {
   }
 
   /**
+   * Get the public host/URL for a port exposed in the sandbox.
+   * This uses E2B's built-in getHost method to generate a public URL.
+   * 
+   * @param port - The port number to get the host for
+   * @returns The public host address (e.g., "abc123-3000.e2b.dev")
+   */
+  getHost(port: number): string {
+    return this.sandbox.getHost(port);
+  }
+
+  /**
+   * Check if the sandbox is still running/alive.
+   */
+  async isRunning(): Promise<boolean> {
+    try {
+      return await this.sandbox.isRunning();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Extend the sandbox timeout.
+   * 
+   * @param timeoutMs - New timeout in milliseconds from now
+   */
+  async setTimeout(timeoutMs: number): Promise<void> {
+    await this.sandbox.setTimeout(timeoutMs);
+  }
+
+  /**
    * Emit output to all listeners.
    */
   private emitOutput(data: AgentOutput): void {

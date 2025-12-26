@@ -135,4 +135,20 @@
   .animate-pulse-ring {
     animation: pulse-ring 1.5s ease-out infinite;
   }
+  
+  /* Indeterminate progress bar animation */
+  .animate-pulse-slide {
+    animation: pulse-slide 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes pulse-slide {
+    0%, 100% {
+      transform: translateX(-100%);
+      opacity: 0.5;
+    }
+    50% {
+      transform: translateX(200%);
+      opacity: 1;
+    }
+  }
 }

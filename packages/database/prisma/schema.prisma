@@ -146,6 +146,25 @@ model Build {
   outputUrl   String?
   artifactKey String?  // Storage key for build artifacts (e.g., "builds/{id}/artifacts.zip")
 
+  // Preview sandbox info (for live preview from artifacts)
+  previewSandboxId String?
+  previewStatus    String?   @default("idle")
+  previewPort      Int?
+  previewUrl       String?
+  previewStartedAt DateTime?
+  previewExpiresAt DateTime?
+
+  // Pause/Resume support
+  pausedAt            DateTime?
+  pauseReason         String?
+  checkpointData      Json?     // Stores resume checkpoint data
+  conversationHistory Json?     // Stores agent conversation history for resume
+
+  // Review gates (optional approval checkpoints)
+  reviewGatesEnabled  Boolean   @default(false)  // Enable design/feature review before building
+  designApprovedAt    DateTime?                  // When DESIGN.md was approved
+  featuresApprovedAt  DateTime?                  // When feature_list.json was approved
+
   // Relations
   project     Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
   appSpecRef  AppSpec?     @relation(fields: [appSpecId], references: [id], onDelete: SetNull)
@@ -219,6 +238,9 @@ enum BuildStatus {
   PENDING
   INITIALIZING
   RUNNING
+  PAUSED
+  AWAITING_DESIGN_REVIEW    // Waiting for user to review DESIGN.md
+  AWAITING_FEATURE_REVIEW   // Waiting for user to review feature_list.json
   COMPLETED
   FAILED
   CANCELLED

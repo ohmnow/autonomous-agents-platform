@@ -1,0 +1,729 @@
+<project_specification>
+  <project_name>SubHunter</project_name>
+
+  <overview>
+    SubHunter is a comprehensive financial wellness platform designed to combat "subscription creep"—the gradual accumulation of recurring charges that drain personal and business finances. The platform analyzes connected bank transactions to discover recurring subscriptions (including annual and semi-annual charges that many budgeting apps miss), surfaces actionable insights, and provides AI-assisted cancellation guidance.
+
+    IMPORTANT BUILD MODE REQUIREMENT (Mock-First, Production-Ready):
+    This app must be buildable and fully functional end-to-end WITHOUT requiring external API keys at initial build time.
+    - If Plaid or Claude credentials are missing/invalid, the system MUST automatically fall back to realistic mock services.
+    - When credentials are later supplied, each capability seamlessly transitions into "production mode" (real services) without changing product behavior or requiring refactors.
+    - The UI MUST clearly indicate whether the app is currently operating in mock mode vs real mode.
+  </overview>
+
+  <complexity_tier>production</complexity_tier>
+  <target_features>180</target_features>
+
+  <technology_stack>
+    <frontend>
+      <framework>React 18 with Vite 4.x</framework>
+      <styling>Tailwind CSS 3.x with custom component library</styling>
+      <state_management>React Context API with useReducer for complex state</state_management>
+      <ui_components>Headless UI with custom Tailwind components</ui_components>
+      <routing>React Router</routing>
+    </frontend>
+    <backend>
+      <runtime>Node.js 18+ with Express.js</runtime>
+      <database>SQLite with better-sqlite3 for performance</database>
+      <authentication>JWT-based auth with bcrypt password hashing</authentication>
+      <streaming>Server-Sent Events (SSE) for streaming AI output when applicable</streaming>
+      <security_headers>Helmet.js</security_headers>
+    </backend>
+  </technology_stack>
+
+  <environment_variables>
+    <description>
+      Environment variables MUST be validated at startup, and external integrations MUST gracefully fall back to mocks when their credentials are empty or invalid.
+    </description>
+    <env_file_example>
+      <![CDATA[
+# Application Configuration
+NODE_ENV=development
+PORT=3000
+FRONTEND_URL=http://localhost:3000
+DATABASE_URL=./data/SubHunter.db
+
+# Security
+JWT_SECRET=dev-jwt-secret-minimum-32-characters-long
+JWT_EXPIRES_IN=7d
+BCRYPT_ROUNDS=12
+
+# Plaid Integration (Leave empty to use mocks)
+PLAID_CLIENT_ID=
+PLAID_SECRET=
+PLAID_ENV=sandbox
+
+# Anthropic Claude API (Leave empty to use mocks)
+ANTHROPIC_API_KEY=
+
+# Email Service (Leave empty to use console logging)
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+      ]]>
+    </env_file_example>
+  </environment_variables>
+
+  <credentials>
+    <purpose>
+      This section defines the REQUIRED STRUCTURE for providing project credentials to the build/agent in a safe, repeatable way.
+      - DO NOT hardcode real secrets directly into this spec for long-term storage.
+      - Instead, reference environment variables and/or secret manager references.
+      - Runtime services MUST read secrets from environment variables (or injected runtime secrets), not from this file.
+      - The agent/build system MAY use this spec to generate env templates, validate configuration, and decide real-vs-mock mode.
+    </purpose>
+
+    <delivery_pattern>
+      <default_mode>auto</default_mode>
+      <selection_rules>
+        <rule>
+          <when>all_required_credentials_present_and_valid</when>
+          <use>real</use>
+        </rule>
+        <rule>
+          <when>any_required_credential_missing_or_invalid</when>
+          <use>mock</use>
+        </rule>
+      </selection_rules>
+      <secret_handling>
+        <never_log>credential_values</never_log>
+        <never_expose_in_api>credential_values</never_expose_in_api>
+        <safe_status_api>Only return booleans (present/valid) and active mode (real/mock) per provider.</safe_status_api>
+      </secret_handling>
+    </delivery_pattern>
+
+    <providers>
+      <provider name="plaid" mode="auto">
+        <credentials_required_for_real>
+          <credential id="PLAID_CLIENT_ID" source="env" env_var="PLAID_CLIENT_ID" required="true" secret="true" />
+          <credential id="PLAID_SECRET" source="env" env_var="PLAID_SECRET" required="true" secret="true" />
+          <credential id="PLAID_ENV" source="env" env_var="PLAID_ENV" required="false" secret="false" default="sandbox" />
+        </credentials_required_for_real>
+        <validation>
+          <check>PLAID_CLIENT_ID is non-empty</check>
+          <check>PLAID_SECRET is non-empty</check>
+          <check>PLAID_ENV in (sandbox, development, production)</check>
+        </validation>
+        <mock_fallback>
+          <when>PLAID_CLIENT_ID or PLAID_SECRET missing/invalid</when>
+          <behavior>Use mock Plaid service to generate accounts + 12+ months transactions</behavior>
+        </mock_fallback>
+      </provider>
+
+      <provider name="anthropic" mode="auto">
+        <credentials_required_for_real>
+          <credential id="ANTHROPIC_API_KEY" source="env" env_var="ANTHROPIC_API_KEY" required="true" secret="true" />
+        </credentials_required_for_real>
+        <validation>
+          <check>ANTHROPIC_API_KEY is non-empty</check>
+        </validation>
+        <mock_fallback>
+          <when>ANTHROPIC_API_KEY missing/invalid</when>
+          <behavior>Use mock Claude service for analysis + cancellation guides (optionally simulated streaming)</behavior>
+        </mock_fallback>
+      </provider>
+
+      <provider name="email" mode="auto">
+        <credentials_required_for_real>
+          <credential id="SMTP_HOST" source="env" env_var="SMTP_HOST" required="true" secret="false" />
+          <credential id="SMTP_PORT" source="env" env_var="SMTP_PORT" required="false" secret="false" default="587" />
+          <credential id="SMTP_USER" source="env" env_var="SMTP_USER" required="false" secret="true" />
+          <credential id="SMTP_PASS" source="env" env_var="SMTP_PASS" required="false" secret="true" />
+        </credentials_required_for_real>
+        <validation>
+          <check>SMTP_HOST is non-empty to enable real email</check>
+        </validation>
+        <mock_fallback>
+          <when>SMTP_HOST missing/invalid</when>
+          <behavior>Use mock email service that logs outgoing emails to console</behavior>
+        </mock_fallback>
+      </provider>
+    </providers>
+
+    <optional_inline_overrides>
+      <warning>
+        Inline credential values are ONLY for ephemeral local testing. If used at all, they must be injected at build time and MUST NOT be committed.
+      </warning>
+      <example_structure>
+        <inline_credential provider="anthropic" id="ANTHROPIC_API_KEY" enabled="false">
+          <value>__INJECT_AT_RUNTIME_DO_NOT_COMMIT__</value>
+        </inline_credential>
+      </example_structure>
+    </optional_inline_overrides>
+  </credentials>
+
+  <mock_fallback_requirements>
+    <automatic_fallback_logic>
+      - External services MUST be selected via a service factory pattern.
+      - Selection MUST be automatic based on credential presence/validity at runtime.
+      - The app MUST expose system status (mock vs real) via an API endpoint AND show it in the UI.
+    </automatic_fallback_logic>
+    <mock_services>
+      <mock_plaid_service>
+        - Generates realistic bank accounts and transaction histories (12+ months).
+        - Includes recurring charges for common merchants (e.g., Netflix, Spotify, Adobe, Amazon Prime, Apple, Google, Microsoft, Zoom, Dropbox).
+        - Supports multiple frequencies: monthly, quarterly, semi-annual, annual; includes variability (merchant naming drift, small price changes, proration).
+        - Simulates sync behavior (incremental updates), pending transactions, and account status changes.
+      </mock_plaid_service>
+      <mock_claude_service>
+        - Produces plausible subscription detection reasoning and structured results (confidence scores, frequency inference, next billing prediction).
+        - Generates cancellation guides for common services (steps, difficulty, required info, phone script/email template where relevant).
+        - Supports "streaming-like" behavior when SSE endpoints are used (can be simulated).
+      </mock_claude_service>
+      <mock_email_service>
+        - Logs "send email" attempts to console with recipient, subject, and token URLs instead of sending.
+        - Supports email verification and password reset workflows.
+      </mock_email_service>
+    </mock_services>
+    <ui_status_indicators>
+      - Global indicator in app shell: Mock Mode / Production Mode.
+      - Per-integration indicator (Plaid / Claude / Email) in a System Status view.
+      - Admin/system endpoint that returns current service mode and configuration sanity (without leaking secrets).
+    </ui_status_indicators>
+  </mock_fallback_requirements>
+
+  <core_features>
+    <feature_group name="User Authentication & Profile Management">
+      <feature>User registration with email verification (mock email logs when SMTP not configured)</feature>
+      <feature>Secure login with password strength requirements</feature>
+      <feature>Password reset via email with time-limited tokens (mock email logs when SMTP not configured)</feature>
+      <feature>User profile management and preferences</feature>
+      <feature>Account deletion with data cleanup</feature>
+      <feature>Two-factor authentication option</feature>
+      <feature>Session management and automatic logout</feature>
+      <feature>Rate limiting for authentication endpoints</feature>
+      <feature>Onboarding completion tracking</feature>
+    </feature_group>
+
+    <feature_group name="Bank Account Integration (Plaid with Mock Fallback)">
+      <feature>Plaid Link integration for secure bank connection (mock Link flow when Plaid keys missing)</feature>
+      <feature>Multiple bank account support per user</feature>
+      <feature>Account verification and validation</feature>
+      <feature>Transaction data synchronization (12+ months)</feature>
+      <feature>Real-time account status monitoring (simulated in mock mode)</feature>
+      <feature>Automatic re-authentication handling</feature>
+      <feature>Bank account disconnection and cleanup</feature>
+      <feature>Transaction data refresh scheduling</feature>
+      <feature>Error handling for bank connection issues</feature>
+      <feature>Webhook handling (real Plaid) with mock simulation path</feature>
+    </feature_group>
+
+    <feature_group name="Subscription Detection Engine (Heuristics + Claude with Mock Fallback)">
+      <feature>Heuristic recurring-charge detection</feature>
+      <feature>AI-powered transaction pattern analysis (Claude; mock when key missing)</feature>
+      <feature>Monthly subscription identification</feature>
+      <feature>Annual subscription detection with date alignment</feature>
+      <feature>Semi-annual and quarterly subscription recognition</feature>
+      <feature>Variable amount subscription handling</feature>
+      <feature>Merchant name normalization and matching</feature>
+      <feature>False positive filtering and validation</feature>
+      <feature>Confidence scoring for detected subscriptions</feature>
+      <feature>Manual subscription override and correction</feature>
+      <feature>Subscription amount trend analysis</feature>
+      <feature>Duplicate subscription detection and merging</feature>
+    </feature_group>
+
+    <feature_group name="Account Separation & Organization">
+      <feature>Personal vs business account classification</feature>
+      <feature>Account tagging and custom labeling</feature>
+      <feature>Cross-account subscription detection prevention</feature>
+      <feature>Separate dashboards for personal and business</feature>
+      <feature>Account-specific spending insights</feature>
+      <feature>Multi-user business account sharing</feature>
+      <feature>Account privacy settings and permissions</feature>
+    </feature_group>
+
+    <feature_group name="Subscription Management">
+      <feature>Comprehensive subscription listing and details</feature>
+      <feature>Manual subscription addition and editing</feature>
+      <feature>Subscription status tracking (active/cancelled/paused/archived/flagged)</feature>
+      <feature>Cost per subscription with historical trends</feature>
+      <feature>Next billing date predictions</feature>
+      <feature>Subscription notes and custom tags</feature>
+      <feature>Bulk subscription actions</feature>
+      <feature>Subscription archiving and restoration</feature>
+    </feature_group>
+
+    <feature_group name="AI-Powered Cancellation Assistance (Claude with Mock Fallback)">
+      <feature>Cancellation guide generation for a merchant</feature>
+      <feature>Step-by-step cancellation guide generation</feature>
+      <feature>Cancellation difficulty assessment</feature>
+      <feature>Required information checklist for cancellation</feature>
+      <feature>Cancellation email template generation</feature>
+      <feature>Phone script assistance for cancellation calls</feature>
+      <feature>Platform-specific cancellation strategies</feature>
+      <feature>Cancellation follow-up reminder system</feature>
+      <feature>Guide caching for popular merchants</feature>
+      <feature>User-contributed guide submission and admin verification flow</feature>
+    </feature_group>
+
+    <feature_group name="Spending Analytics & Insights">
+      <feature>Category-based spending breakdown</feature>
+      <feature>Monthly and annual spending comparisons</feature>
+      <feature>Subscription cost trend analysis</feature>
+      <feature>Spending pattern visualization with charts</feature>
+      <feature>Spending anomaly detection and alerts</feature>
+      <feature>Exportable spending reports</feature>
+      <feature>Savings opportunity recommendations</feature>
+    </feature_group>
+
+    <feature_group name="Monitoring & Alerting System">
+      <feature>New subscription detection alerts</feature>
+      <feature>Price increase monitoring and notifications</feature>
+      <feature>Billing date reminders</feature>
+      <feature>Email and in-app notification preferences</feature>
+      <feature>Alert frequency customization</feature>
+      <feature>Alert history and management</feature>
+    </feature_group>
+
+    <feature_group name="Content & SEO Hub">
+      <feature>Dynamic cancellation guide pages</feature>
+      <feature>SEO-optimized content generation and routing</feature>
+      <feature>Search functionality for guides and content</feature>
+      <feature>Content management system for guides</feature>
+      <feature>Page view tracking for analytics</feature>
+      <feature>Sitemap generation for SEO</feature>
+    </feature_group>
+
+    <feature_group name="Security & Privacy">
+      <feature>Encrypt sensitive data at rest and in transit</feature>
+      <feature>Do not leak secrets in logs or API responses</feature>
+      <feature>Audit logging for sensitive operations</feature>
+      <feature>Rate limiting for API endpoints</feature>
+      <feature>CORS configuration and security headers</feature>
+    </feature_group>
+
+    <feature_group name="Performance & Reliability">
+      <feature>Database query optimization and indexes</feature>
+      <feature>Background job processing for heavy operations (analysis, exports)</feature>
+      <feature>Caching for frequently accessed data (guides, summaries)</feature>
+      <feature>Health check and metrics endpoints</feature>
+    </feature_group>
+  </core_features>
+
+  <database_schema>
+    <notes>
+      The database schema below combines the original high-level schema with additional implementation fields to support onboarding, sessions, reports, and mock/real transitions.
+    </notes>
+
+    <table name="users">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>email: TEXT UNIQUE NOT NULL</column>
+      <column>password_hash: TEXT NOT NULL</column>
+      <column>first_name: TEXT</column>
+      <column>last_name: TEXT</column>
+      <column>email_verified: BOOLEAN DEFAULT FALSE</column>
+      <column>verification_token: TEXT</column>
+      <column>reset_token: TEXT</column>
+      <column>reset_token_expires: DATETIME</column>
+      <column>preferences: JSON</column>
+      <column>subscription_status: TEXT DEFAULT 'trial'</column>
+      <column>subscription_expires_at: DATETIME</column>
+      <column>onboarding_completed: BOOLEAN DEFAULT FALSE</column>
+      <column>last_login: DATETIME</column>
+      <column>is_active: BOOLEAN DEFAULT TRUE</column>
+      <column>two_factor_enabled: BOOLEAN DEFAULT FALSE</column>
+      <column>two_factor_secret: TEXT</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="user_sessions">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>session_token: TEXT UNIQUE NOT NULL</column>
+      <column>expires_at: DATETIME NOT NULL</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="bank_accounts">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>plaid_account_id: TEXT UNIQUE NOT NULL</column>
+      <column>plaid_access_token: TEXT NOT NULL</column>
+      <column>institution_name: TEXT</column>
+      <column>account_name: TEXT NOT NULL</column>
+      <column>account_type: TEXT NOT NULL</column>
+      <column>account_subtype: TEXT</column>
+      <column>mask: TEXT</column>
+      <column>category: TEXT DEFAULT 'personal' CHECK (category IN ('personal','business'))</column>
+      <column>custom_label: TEXT</column>
+      <column>is_active: BOOLEAN DEFAULT TRUE</column>
+      <column>last_sync: DATETIME</column>
+      <column>sync_status: TEXT DEFAULT 'connected'</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="transactions">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>account_id: INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE</column>
+      <column>plaid_transaction_id: TEXT UNIQUE NOT NULL</column>
+      <column>amount: DECIMAL(10,2) NOT NULL</column>
+      <column>date: DATE NOT NULL</column>
+      <column>merchant_name: TEXT</column>
+      <column>category_primary: TEXT</column>
+      <column>category_detailed: TEXT</column>
+      <column>description: TEXT NOT NULL</column>
+      <column>pending: BOOLEAN DEFAULT FALSE</column>
+      <column>is_subscription: BOOLEAN DEFAULT FALSE</column>
+      <column>subscription_id: INTEGER</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="subscriptions">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>account_id: INTEGER REFERENCES bank_accounts(id) ON DELETE SET NULL</column>
+      <column>merchant_name: TEXT NOT NULL</column>
+      <column>normalized_merchant_name: TEXT NOT NULL</column>
+      <column>amount: DECIMAL(10,2) NOT NULL</column>
+      <column>frequency: TEXT NOT NULL CHECK (frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual', 'custom'))</column>
+      <column>frequency_days: INTEGER</column>
+      <column>next_billing_date: DATE</column>
+      <column>last_billing_date: DATE</column>
+      <column>first_detected: DATE NOT NULL</column>
+      <column>status: TEXT DEFAULT 'active' CHECK (status IN ('active', 'cancelled', 'paused', 'archived', 'flagged'))</column>
+      <column>confidence_score: DECIMAL(3,2)</column>
+      <column>detection_method: TEXT CHECK (detection_method IN ('ai_detected', 'manual_added', 'imported'))</column>
+      <column>category: TEXT</column>
+      <column>user_category: TEXT</column>
+      <column>custom_tags: JSON</column>
+      <column>notes: TEXT</column>
+      <column>total_spent: DECIMAL(10,2) DEFAULT 0</column>
+      <column>charge_count: INTEGER DEFAULT 0</column>
+      <column>is_business: BOOLEAN DEFAULT FALSE</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="subscription_transactions">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>subscription_id: INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE</column>
+      <column>transaction_id: INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="cancellation_guides">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>merchant_name: TEXT NOT NULL</column>
+      <column>normalized_merchant_name: TEXT UNIQUE</column>
+      <column>website_url: TEXT</column>
+      <column>cancellation_method: TEXT</column>
+      <column>difficulty_level: TEXT CHECK (difficulty_level IN ('easy', 'medium', 'hard', 'very_hard'))</column>
+      <column>estimated_time: TEXT</column>
+      <column>required_info: JSON</column>
+      <column>step_by_step_guide: JSON</column>
+      <column>instructions: TEXT</column>
+      <column>phone_number: TEXT</column>
+      <column>cancellation_url: TEXT</column>
+      <column>email_template: TEXT</column>
+      <column>success_rate: DECIMAL(5,2)</column>
+      <column>user_ratings: JSON</column>
+      <column>verification_status: TEXT DEFAULT 'unverified'</column>
+      <column>source: TEXT DEFAULT 'ai_generated'</column>
+      <column>verified: BOOLEAN DEFAULT FALSE</column>
+      <column>last_updated: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="cancellation_attempts">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>subscription_id: INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE</column>
+      <column>guide_id: INTEGER REFERENCES cancellation_guides(id) ON DELETE SET NULL</column>
+      <column>status: TEXT DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'successful', 'failed', 'abandoned'))</column>
+      <column>method_used: TEXT</column>
+      <column>notes: TEXT</column>
+      <column>started_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>completed_at: DATETIME</column>
+      <column>difficulty_rating: INTEGER CHECK (difficulty_rating BETWEEN 1 AND 5)</column>
+      <column>guide_helpful: BOOLEAN</column>
+      <column>feedback: TEXT</column>
+    </table>
+
+    <table name="alerts">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>type: TEXT NOT NULL CHECK (type IN ('new_subscription', 'price_increase', 'billing_reminder', 'unusual_activity'))</column>
+      <column>title: TEXT NOT NULL</column>
+      <column>message: TEXT NOT NULL</column>
+      <column>related_subscription_id: INTEGER REFERENCES subscriptions(id) ON DELETE CASCADE</column>
+      <column>is_read: BOOLEAN DEFAULT FALSE</column>
+      <column>is_dismissed: BOOLEAN DEFAULT FALSE</column>
+      <column>severity: TEXT DEFAULT 'info' CHECK (severity IN ('info', 'warning', 'critical'))</column>
+      <column>action_required: BOOLEAN DEFAULT FALSE</column>
+      <column>expires_at: DATETIME</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="analysis_reports">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE</column>
+      <column>account_id: INTEGER REFERENCES bank_accounts(id) ON DELETE SET NULL</column>
+      <column>report_type: TEXT NOT NULL CHECK (report_type IN ('initial', 'monthly', 'custom'))</column>
+      <column>total_subscriptions: INTEGER</column>
+      <column>total_monthly_cost: DECIMAL(10,2)</column>
+      <column>total_annual_cost: DECIMAL(10,2)</column>
+      <column>insights: JSON</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="content_pages">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>slug: TEXT UNIQUE NOT NULL</column>
+      <column>title: TEXT NOT NULL</column>
+      <column>meta_description: TEXT</column>
+      <column>content: TEXT NOT NULL</column>
+      <column>keywords: TEXT</column>
+      <column>merchant_name: TEXT</column>
+      <column>page_type: TEXT DEFAULT 'guide' CHECK (page_type IN ('guide', 'blog', 'help'))</column>
+      <column>published: BOOLEAN DEFAULT FALSE</column>
+      <column>view_count: INTEGER DEFAULT 0</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="api_usage">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>user_id: INTEGER REFERENCES users(id) ON DELETE SET NULL</column>
+      <column>endpoint: TEXT NOT NULL</column>
+      <column>method: TEXT NOT NULL</column>
+      <column>status_code: INTEGER NOT NULL</column>
+      <column>response_time_ms: INTEGER</column>
+      <column>ip_address: TEXT</column>
+      <column>user_agent: TEXT</column>
+      <column>request_size: INTEGER</column>
+      <column>response_size: INTEGER</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+
+    <table name="system_config">
+      <column>id: INTEGER PRIMARY KEY AUTOINCREMENT</column>
+      <column>key: TEXT UNIQUE NOT NULL</column>
+      <column>value: TEXT NOT NULL</column>
+      <column>type: TEXT DEFAULT 'string' CHECK (type IN ('string', 'number', 'boolean', 'json'))</column>
+      <column>description: TEXT</column>
+      <column>is_public: BOOLEAN DEFAULT FALSE</column>
+      <column>created_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+      <column>updated_at: DATETIME DEFAULT CURRENT_TIMESTAMP</column>
+    </table>
+  </database_schema>
+
+  <api_endpoints>
+    <endpoint_group name="Authentication">
+      <endpoint method="POST" path="/api/auth/register">User registration with email verification</endpoint>
+      <endpoint method="POST" path="/api/auth/login">User authentication and token generation</endpoint>
+      <endpoint method="POST" path="/api/auth/logout">Session termination and token invalidation</endpoint>
+      <endpoint method="POST" path="/api/auth/refresh">JWT token refresh</endpoint>
+      <endpoint method="POST" path="/api/auth/verify-email">Email address verification</endpoint>
+      <endpoint method="POST" path="/api/auth/forgot-password">Password reset request</endpoint>
+      <endpoint method="POST" path="/api/auth/reset-password">Password reset execution</endpoint>
+      <endpoint method="POST" path="/api/auth/change-password">Password change for authenticated users</endpoint>
+      <endpoint method="POST" path="/api/auth/enable-2fa">Two-factor authentication setup</endpoint>
+      <endpoint method="POST" path="/api/auth/disable-2fa">Two-factor authentication removal</endpoint>
+      <endpoint method="POST" path="/api/user/complete-onboarding">Mark onboarding as complete</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="User Management">
+      <endpoint method="GET" path="/api/user/profile">Get current user profile</endpoint>
+      <endpoint method="PUT" path="/api/user/profile">Update user profile information</endpoint>
+      <endpoint method="DELETE" path="/api/user/account">Delete user account and all data</endpoint>
+      <endpoint method="GET" path="/api/user/preferences">Get user preferences and settings</endpoint>
+      <endpoint method="PUT" path="/api/user/preferences">Update user preferences</endpoint>
+      <endpoint method="GET" path="/api/user/activity">Get user activity history</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="Plaid Integration (Real + Mock)">
+      <endpoint method="POST" path="/api/plaid/create-link-token">Generate Plaid Link token (mock when keys missing)</endpoint>
+      <endpoint method="POST" path="/api/plaid/exchange-public-token">Exchange public token for access token (mock when keys missing)</endpoint>
+      <endpoint method="GET" path="/api/plaid/accounts">Get user's connected accounts</endpoint>
+      <endpoint method="DELETE" path="/api/plaid/accounts/{id}">Disconnect bank account</endpoint>
+      <endpoint method="POST" path="/api/plaid/sync-transactions">Sync latest transactions (real or mock)</endpoint>
+      <endpoint method="POST" path="/api/plaid/webhook">Handle Plaid webhooks (real) / simulate updates (mock)</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="Subscription Detection & Analysis">
+      <endpoint method="POST" path="/api/analysis/detect-subscriptions">Run subscription detection (heuristics + AI when available)</endpoint>
+      <endpoint method="GET" path="/api/analysis/subscriptions">Get user's subscriptions</endpoint>
+      <endpoint method="PUT" path="/api/analysis/subscriptions/{id}">Update subscription details</endpoint>
+      <endpoint method="DELETE" path="/api/analysis/subscriptions/{id}">Cancel/archive a subscription</endpoint>
+      <endpoint method="GET" path="/api/analysis/insights">Get spending insights</endpoint>
+      <endpoint method="GET" path="/api/analysis/reports">Get analysis reports</endpoint>
+      <endpoint method="POST" path="/api/analysis/generate-report">Generate new analysis report</endpoint>
+      <endpoint method="GET" path="/api/subscriptions/summary">Get subscription cost summary</endpoint>
+      <endpoint method="POST" path="/api/subscriptions/bulk-update">Bulk update subscription statuses</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="Cancellation Assistance (Claude + Mock)">
+      <endpoint method="GET" path="/api/cancellation/guide/{merchant}">Get cancellation guide for merchant</endpoint>
+      <endpoint method="POST" path="/api/cancellation/generate-guide">Generate AI cancellation instructions (mock when key missing)</endpoint>
+      <endpoint method="POST" path="/api/cancellation/attempt">Start cancellation attempt tracking</endpoint>
+      <endpoint method="PUT" path="/api/cancellation/attempt/{id}">Update cancellation attempt status</endpoint>
+      <endpoint method="GET" path="/api/cancellation/attempts">List user cancellation attempts</endpoint>
+      <endpoint method="POST" path="/api/cancellation/feedback">Submit cancellation guide feedback</endpoint>
+      <endpoint method="POST" path="/api/cancellation/save-guide">Save user-contributed guide</endpoint>
+      <endpoint method="PUT" path="/api/cancellation/verify-guide/{id}">Verify guide accuracy (admin)</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="Alerts and Notifications">
+      <endpoint method="GET" path="/api/alerts">List user alerts</endpoint>
+      <endpoint method="PUT" path="/api/alerts/{id}/read">Mark alert as read</endpoint>
+      <endpoint method="PUT" path="/api/alerts/{id}/dismiss">Dismiss alert</endpoint>
+      <endpoint method="DELETE" path="/api/alerts/{id}">Delete alert</endpoint>
+      <endpoint method="POST" path="/api/alerts/mark-all-read">Mark all alerts as read</endpoint>
+      <endpoint method="GET" path="/api/alerts/settings">Get notification preferences</endpoint>
+      <endpoint method="PUT" path="/api/alerts/settings">Update notification preferences</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="Content and SEO">
+      <endpoint method="GET" path="/api/content/pages">Get published content pages</endpoint>
+      <endpoint method="GET" path="/api/content/pages/{slug}">Get specific content page</endpoint>
+      <endpoint method="POST" path="/api/content/pages">Create new content page (admin)</endpoint>
+      <endpoint method="PUT" path="/api/content/pages/{id}">Update content page (admin)</endpoint>
+      <endpoint method="POST" path="/api/content/view/{slug}">Track page view</endpoint>
+      <endpoint method="GET" path="/api/content/sitemap">Generate sitemap</endpoint>
+      <endpoint method="GET" path="/api/content/search">Search content and guides</endpoint>
+    </endpoint_group>
+
+    <endpoint_group name="System & Health">
+      <endpoint method="GET" path="/api/system/status">Get service status (real vs mock) for Plaid/Claude/Email</endpoint>
+      <endpoint method="GET" path="/api/health">Health check endpoint</endpoint>
+      <endpoint method="GET" path="/api/status">Public API status endpoint</endpoint>
+      <endpoint method="GET" path="/api/metrics">API performance metrics</endpoint>
+      <endpoint method="GET" path="/api/version">API version information</endpoint>
+      <endpoint method="POST" path="/api/feedback">Submit user feedback</endpoint>
+    </endpoint_group>
+  </api_endpoints>
+
+  <ui_layout>
+    <page name="Landing Page">
+      <section>Hero section with value proposition and Plaid security badges</section>
+      <section>Problem statement about subscription creep</section>
+      <section>Key features overview with icons and benefits</section>
+      <section>Security and privacy assurance section</section>
+      <section>Popular cancellation guides preview</section>
+      <section>Call-to-action with free account creation</section>
+      <section>Footer with links to guides, privacy policy, and support</section>
+    </page>
+
+    <page name="Authentication Pages">
+      <section>Registration form with email, password, and terms acceptance</section>
+      <section>Login form with email/password and forgot password link</section>
+      <section>Email verification confirmation page</section>
+      <section>Password reset request and confirmation forms</section>
+      <section>Two-factor authentication setup and verification</section>
+    </page>
+
+    <page name="Onboarding Flow">
+      <section>Welcome screen with platform overview</section>
+      <section>Plaid Link integration for bank account connection (mock flow supported)</section>
+      <section>Account type classification (personal vs business)</section>
+      <section>Initial preferences setup</section>
+      <section>Loading screen for initial transaction analysis</section>
+      <section>First results overview with next steps</section>
+    </page>
+
+    <page name="Dashboard">
+      <section>Header with navigation, notifications, and user menu</section>
+      <section>System status indicator: Mock vs Production</section>
+      <section>Financial health score widget with trend indicator</section>
+      <section>Total subscription costs overview (monthly/annual)</section>
+      <section>Recent alerts and new subscription notifications</section>
+      <section>Spending insights charts and category breakdowns</section>
+      <section>Connected accounts status indicators</section>
+      <section>Suggested actions and recommendations panel</section>
+    </page>
+
+    <page name="Subscriptions List">
+      <section>Filter and search bar with sorting options</section>
+      <section>Account type toggle (personal/business)</section>
+      <section>Subscription cards with merchant logo, amount, and frequency</section>
+      <section>Bulk action toolbar for multi-selection</section>
+      <section>Add manual subscription button</section>
+      <section>Subscription status indicators and confidence scores</section>
+      <section>Quick cancellation action buttons</section>
+    </page>
+
+    <page name="Subscription Details">
+      <section>Subscription header with merchant info and status</section>
+      <section>Cost and billing frequency details</section>
+      <section>Transaction history related to subscription</section>
+      <section>Cancellation assistance panel with guide access</section>
+      <section>Custom tags and notes section</section>
+      <section>Edit subscription information form</section>
+      <section>Subscription actions (cancel, pause, archive)</section>
+    </page>
+
+    <page name="Cancellation Guide">
+      <section>Guide header with merchant name and difficulty level</section>
+      <section>Required information checklist</section>
+      <section>Step-by-step cancellation instructions</section>
+      <section>Contact information (phone, email, website)</section>
+      <section>Email template and phone script sections</section>
+      <section>Success rate and user feedback display</section>
+      <section>Track cancellation attempt button</section>
+    </page>
+
+    <page name="Analytics Dashboard">
+      <section>Date range selector and account filter</section>
+      <section>Spending overview charts (monthly, quarterly, annual)</section>
+      <section>Category breakdown charts</section>
+      <section>Trend analysis with subscription cost over time</section>
+      <section>Savings opportunities identification</section>
+      <section>Export options for reports and data</section>
+    </page>
+
+    <page name="System Status">
+      <section>Shows per-service mode: Plaid (mock/real), Claude (mock/real), Email (mock/real)</section>
+      <section>Shows configuration readiness checks (without secrets)</section>
+      <section>Links to docs and env setup instructions</section>
+    </page>
+  </ui_layout>
+
+  <implementation_priorities>
+    <priority level="1">
+      User authentication and profile management (mock email allowed),
+      Plaid integration layer (mock fallback required),
+      basic subscription detection engine,
+      subscription listing and details,
+      basic cancellation guide system (mock Claude allowed),
+      system status indicators.
+    </priority>
+    <priority level="2">
+      Advanced AI detection algorithms,
+      full cancellation assistance features,
+      spending analytics and insights,
+      alert system,
+      mobile-responsive design,
+      user preferences and settings.
+    </priority>
+    <priority level="3">
+      Content hub and SEO features,
+      advanced analytics and reporting,
+      business account separation enhancements,
+      data export capabilities,
+      admin dashboard,
+      performance optimization and caching.
+    </priority>
+  </implementation_priorities>
+
+  <success_criteria>
+    <criterion category="functionality">Successfully connects to bank accounts via Plaid OR mock mode and analyzes transactions end-to-end</criterion>
+    <criterion category="functionality">Detects at least 85% of actual recurring subscriptions with minimal false positives (with AI enabled), and provides sensible results in mock mode</criterion>
+    <criterion category="functionality">Generates accurate cancellation guides for popular subscription services (with Claude enabled), and provides reasonable templates in mock mode</criterion>
+    <criterion category="ux">Onboarding completion rate above 70% for users who connect accounts</criterion>
+    <criterion category="ux">Users can complete primary tasks (view subscriptions, get cancellation help) in under 3 clicks</criterion>
+    <criterion category="ux">Mobile experience maintains full functionality with touch-optimized interface</criterion>
+    <criterion category="quality">Bank account data synchronization completes within 30 seconds (mock sync should be near-instant)</criterion>
+    <criterion category="quality">AI analysis processes 12 months of transactions in under 60 seconds</criterion>
+    <criterion category="quality">99.9% uptime for core subscription detection and account management features</criterion>
+    <criterion category="security">All sensitive data encrypted at rest and in transit</criterion>
+    <criterion category="security">No credential leakage via logs, errors, or APIs</criterion>
+    <criterion category="business">Users discover average of $200+ in potential monthly savings</criterion>
+  </success_criteria>
+</project_specification>
+
+

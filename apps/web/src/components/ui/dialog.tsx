@@ -66,10 +66,18 @@ export function DialogContent({
   className,
   onClose,
 }: DialogContentProps) {
+  // Check if using flex layout (needs different overflow handling)
+  const isFlexLayout = className?.includes('flex');
+  
   return (
     <div
       className={cn(
-        'relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-lg border bg-card shadow-lg',
+        'relative w-full max-w-4xl rounded-lg border bg-card shadow-lg',
+        // For flex layouts: use fixed height and let children handle scroll
+        // For non-flex: use max-height with overflow
+        isFlexLayout 
+          ? 'h-[85vh] flex flex-col' 
+          : 'max-h-[90vh] overflow-y-auto',
         className
       )}
       onClick={(e) => e.stopPropagation()}
@@ -97,7 +105,7 @@ export function DialogHeader({ children, className }: DialogHeaderProps) {
   return (
     <div
       className={cn(
-        'flex flex-col space-y-1.5 p-6 pb-4 border-b',
+        'flex flex-col space-y-1.5 p-6 pb-4 border-b shrink-0',
         className
       )}
     >

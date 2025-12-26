@@ -88,6 +88,7 @@ export async function POST(request: Request) {
       complexityTier = 'standard',
       targetFeatureCount,
       complexityInferred = true,
+      reviewGatesEnabled = false,
     } = body as {
       appSpec: string;
       projectId?: string;
@@ -97,6 +98,7 @@ export async function POST(request: Request) {
       complexityTier?: ComplexityTier;
       targetFeatureCount?: number;
       complexityInferred?: boolean;
+      reviewGatesEnabled?: boolean;
     };
 
     if (!appSpec) {
@@ -143,18 +145,20 @@ export async function POST(request: Request) {
       complexityTier,
       targetFeatureCount: featureCount,
       complexityInferred,
+      reviewGatesEnabled,
     });
 
     // Update with initial progress and status
+    // Start with total: 0 - the actual feature count will be set once feature_list.json is generated
     build = await updateBuild(build.id, {
       status: 'RUNNING' as BuildStatus,
-      progress: { completed: 0, total: featureCount },
+      progress: { completed: 0, total: 0 },
     });
 
     // Start the build in background (don't await)
     // Note: startBuildInBackground handles its own completion via completeBuild()
     // which properly sets artifactKey. We only need to catch errors here for logging.
-    startBuildInBackground(build.id, appSpec, sandboxProvider, harnessId, featureCount)
+    startBuildInBackground(build.id, appSpec, sandboxProvider, harnessId, featureCount, reviewGatesEnabled)
       .catch(async (error) => {
         // startBuildInBackground already handles status updates internally,
         // but log any unhandled errors for debugging

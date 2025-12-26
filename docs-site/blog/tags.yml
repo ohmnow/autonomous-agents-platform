@@ -1,0 +1,16 @@
+release:
+  label: Release
+  description: Version releases and major updates
+
+feature:
+  label: Feature
+  description: New feature announcements
+
+improvement:
+  label: Improvement
+  description: Enhancements and optimizations
+
+fix:
+  label: Fix
+  description: Bug fixes and patches
+

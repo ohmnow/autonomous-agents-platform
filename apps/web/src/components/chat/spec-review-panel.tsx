@@ -11,6 +11,8 @@ import {
   Hash,
   Loader2,
   RefreshCw,
+  ShieldCheck,
+  Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +24,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +33,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ComplexityAdjuster, getTierInfo, type ComplexityTier } from './complexity-adjuster';
 import { cn } from '@/lib/utils';
@@ -45,9 +54,11 @@ interface SpecReviewPanelProps {
   isExpanding: boolean;
   onAdjustComplexity: (tier: ComplexityTier, features: number) => void;
   onViewSpec: () => void;
-  onStartBuild: () => void;
+  onStartBuild: (reviewGatesEnabled?: boolean) => void;
   onRegenerate?: () => void;
   isBuilding: boolean;
+  reviewGatesEnabled?: boolean;
+  onReviewGatesChange?: (enabled: boolean) => void;
 }
 
 export function SpecReviewPanel({
@@ -61,11 +72,19 @@ export function SpecReviewPanel({
   onStartBuild,
   onRegenerate,
   isBuilding,
+  reviewGatesEnabled = false,
+  onReviewGatesChange,
 }: SpecReviewPanelProps) {
   const [showComplexityAdjuster, setShowComplexityAdjuster] = useState(false);
   const [showSpecModal, setShowSpecModal] = useState(false);
   const [currentTier, setCurrentTier] = useState(inferredComplexity.tier);
   const [currentFeatures, setCurrentFeatures] = useState(inferredComplexity.features);
+  const [localReviewGates, setLocalReviewGates] = useState(reviewGatesEnabled);
+
+  const handleReviewGatesToggle = (checked: boolean) => {
+    setLocalReviewGates(checked);
+    onReviewGatesChange?.(checked);
+  };
 
   const tierInfo = getTierInfo(currentTier);
   const isOverridden = currentTier !== inferredComplexity.tier;
@@ -191,6 +210,29 @@ export function SpecReviewPanel({
             onToggle={() => setShowComplexityAdjuster(!showComplexityAdjuster)}
           />
 
+          {/* Review Gates Toggle */}
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+              <Label htmlFor="review-gates" className="text-sm font-medium cursor-pointer">
+                Review checkpoints
+              </Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <p>Pause the build after generating DESIGN.md and feature list to review and edit before continuing.</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <Switch
+              id="review-gates"
+              checked={localReviewGates}
+              onCheckedChange={handleReviewGatesToggle}
+            />
+          </div>
+
           {/* Actions */}
           <div className="space-y-2">
             {/* Regenerate Button */}
@@ -217,7 +259,7 @@ export function SpecReviewPanel({
             
             {/* Build Button */}
             <Button
-              onClick={onStartBuild}
+              onClick={() => onStartBuild(localReviewGates)}
               disabled={isBuilding || isExpanding || !appSpec || !isXmlSpec}
               className="w-full gap-2 bg-green-600 hover:bg-green-700"
               size="lg"

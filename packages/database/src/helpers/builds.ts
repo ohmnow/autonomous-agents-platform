@@ -19,6 +19,8 @@ export interface CreateBuildInput {
   complexityTier?: ComplexityTier;
   targetFeatureCount?: number;
   complexityInferred?: boolean;
+  // Review gates (optional approval checkpoints)
+  reviewGatesEnabled?: boolean;
 }
 
 /**
@@ -67,11 +69,24 @@ export function getTierDetails(tier: ComplexityTier) {
 export interface UpdateBuildInput {
   sandboxId?: string;
   status?: BuildStatus;
-  progress?: object;
+  progress?: Record<string, unknown>;
   startedAt?: Date;
   completedAt?: Date;
   outputUrl?: string;
   artifactKey?: string;
+  // Preview fields
+  previewStatus?: string;
+  previewPort?: number;
+  previewExpiresAt?: Date;
+  previewStartedAt?: Date;
+  // Pause/Resume checkpoint fields
+  pausedAt?: Date | null;
+  pauseReason?: string | null;
+  checkpointData?: Record<string, unknown>;
+  conversationHistory?: Record<string, unknown>[];
+  // Review gate approval timestamps
+  designApprovedAt?: Date;
+  featuresApprovedAt?: Date;
 }
 
 export interface ListBuildsOptions {
@@ -111,6 +126,7 @@ export async function createBuild(input: CreateBuildInput): Promise<Build> {
       complexityTier: tier,
       targetFeatureCount,
       complexityInferred: input.complexityInferred ?? true,
+      reviewGatesEnabled: input.reviewGatesEnabled ?? false,
     },
   });
 }
@@ -179,7 +195,9 @@ export async function countBuilds(options: Omit<ListBuildsOptions, 'limit' | 'of
 export async function updateBuild(id: string, input: UpdateBuildInput): Promise<Build> {
   return prisma.build.update({
     where: { id },
-    data: input,
+    // Use type assertion because our UpdateBuildInput uses simpler types than Prisma's generated types
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: input as any,
   });
 }
 
@@ -221,6 +239,45 @@ export async function completeBuild(
       completedAt: new Date(),
       ...(options?.outputUrl && { outputUrl: options.outputUrl }),
       ...(options?.artifactKey && { artifactKey: options.artifactKey }),
+    },
+  });
+}
+
+/**
+ * Pause a build (save checkpoint and mark as paused).
+ */
+export async function pauseBuild(
+  id: string,
+  options: {
+    reason?: string;
+    checkpointData?: object;
+    conversationHistory?: object;
+    artifactKey?: string;
+  }
+): Promise<Build> {
+  return prisma.build.update({
+    where: { id },
+    data: {
+      status: 'PAUSED',
+      pausedAt: new Date(),
+      pauseReason: options.reason,
+      checkpointData: options.checkpointData,
+      conversationHistory: options.conversationHistory,
+      ...(options.artifactKey && { artifactKey: options.artifactKey }),
+    },
+  });
+}
+
+/**
+ * Resume a paused build (clear pause state and mark as running).
+ */
+export async function resumeBuild(id: string): Promise<Build> {
+  return prisma.build.update({
+    where: { id },
+    data: {
+      status: 'RUNNING',
+      pausedAt: null,
+      pauseReason: null,
     },
   });
 }

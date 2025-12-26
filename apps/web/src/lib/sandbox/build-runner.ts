@@ -850,6 +850,23 @@ export async function pauseBuildExecution(buildId: string): Promise<{
   pausedBuilds.add(buildId);
   console.log(`[pause] Pause signal sent, pausedBuilds now has: ${pausedBuilds.size} items`);
 
+  // Immediately emit a "pause requested" log so UI shows feedback
+  const pauseRequestedLog: LogEntry = {
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    level: 'info',
+    message: '⏸️ Pause requested - waiting for current operation to complete...',
+    timestamp: new Date().toISOString(),
+  };
+  const currentLogs = activeBuildLogs.get(buildId) || [];
+  currentLogs.push(pauseRequestedLog);
+  activeBuildLogs.set(buildId, currentLogs);
+  
+  // Notify subscribers immediately so UI updates
+  const currentSubscribers = buildSubscribers.get(buildId);
+  if (currentSubscribers) {
+    currentSubscribers.forEach((callback) => callback({ type: 'log', data: pauseRequestedLog }));
+  }
+
   // Wait for the build loop to notice the pause - longer timeout for hung builds
   // Check every 100ms for up to 3 seconds
   let waited = 0;
