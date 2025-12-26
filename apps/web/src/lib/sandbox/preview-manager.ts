@@ -336,35 +336,59 @@ export async function startPreview(
     const startResult = await sandbox.exec(startCmd);
     console.log(`[preview-manager] Start command launched (exit ${startResult.exitCode})`);
     
-    // Give it a moment to actually start the process
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Wait for process to actually start - Vite needs time to compile
+    const INITIAL_WAIT_MS = 3000;
+    console.log(`[preview-manager] Waiting ${INITIAL_WAIT_MS}ms for server to initialize...`);
+    await new Promise(resolve => setTimeout(resolve, INITIAL_WAIT_MS));
 
     // Wait for server to start with retry logic
-    // Vite and other dev servers can take 5-15 seconds to start
-    const MAX_RETRIES = 10;
-    const RETRY_DELAY_MS = 2000;
+    // Vite and other dev servers can take 5-15 seconds to start on first run
+    const MAX_RETRIES = 15;
+    const RETRY_DELAY_MS = 3000;
     let serverReady = false;
     let lastHttpCode = '000';
+    let actualPort = port;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       console.log(`[preview-manager] Checking server status (attempt ${attempt}/${MAX_RETRIES})...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
 
       // Verify server is running by checking the port
-      const checkResult = await sandbox.exec(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/ 2>/dev/null || echo "000"`);
+      // Use a more robust command that captures only the HTTP code
+      const checkResult = await sandbox.exec(
+        `HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://localhost:${actualPort}/ 2>/dev/null); if [ -n "$HTTP_CODE" ]; then echo "$HTTP_CODE"; else echo "000"; fi`
+      );
       lastHttpCode = checkResult.stdout.trim();
+      console.log(`[preview-manager] Raw HTTP response: "${lastHttpCode}"`);
       
-      // Accept any response (even 404) as long as server is responding
-      if (lastHttpCode !== '000') {
+      // Valid HTTP codes are 3 digits from 100-599
+      // Accept any valid response (even 404) as long as server is responding
+      const httpCodeMatch = lastHttpCode.match(/^([1-5]\d{2})$/);
+      if (httpCodeMatch) {
         serverReady = true;
-        console.log(`[preview-manager] Server responded with HTTP ${lastHttpCode}`);
+        console.log(`[preview-manager] Server responded with valid HTTP ${httpCodeMatch[1]}`);
         break;
+      }
+
+      // If primary port not responding, check if server started on a different port
+      // Vite sometimes uses 5174, 5175 if 5173 is taken
+      if (attempt === 3 || attempt === 6) {
+        console.log(`[preview-manager] Scanning for alternative ports...`);
+        const portScan = await sandbox.exec(
+          `ss -tlnp 2>/dev/null | grep -oE ":(517[0-9]|300[0-9])" | head -1 | tr -d ':'`
+        );
+        const foundPort = portScan.stdout.trim();
+        if (foundPort && foundPort !== String(actualPort)) {
+          console.log(`[preview-manager] Found server on alternative port: ${foundPort}`);
+          actualPort = parseInt(foundPort, 10);
+        }
       }
 
       // Check if process is still running
       const psCheck = await sandbox.exec(`pgrep -f "(npm|node|vite)" || echo "none"`);
-      console.log(`[preview-manager] Process check: ${psCheck.stdout.trim()}`);
-      if (psCheck.stdout.trim() === 'none') {
+      const processInfo = psCheck.stdout.trim();
+      console.log(`[preview-manager] Process check: ${processInfo}`);
+      if (processInfo === 'none') {
         // Server process died, check logs immediately
         const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
         console.error(`[preview-manager] Server died. Logs:\n${logs.stdout}`);
@@ -375,14 +399,19 @@ export async function startPreview(
     if (!serverReady) {
       // Server didn't respond after all retries, check logs
       const logs = await sandbox.exec('cat /tmp/preview.log 2>/dev/null || echo "No logs"');
-      const portCheck = await sandbox.exec(`netstat -tlnp 2>/dev/null | grep -E ":${port}|:5173|:3000" || ss -tlnp 2>/dev/null | grep -E ":${port}|:5173|:3000" || echo "no listeners"`);
+      const portCheck = await sandbox.exec(
+        `ss -tlnp 2>/dev/null | grep -E ":(517[0-9]|300[0-9])" || netstat -tlnp 2>/dev/null | grep -E ":(517[0-9]|300[0-9])" || echo "no listeners"`
+      );
       console.error(`[preview-manager] Server didn't respond. Port check: ${portCheck.stdout}`);
       console.error(`[preview-manager] Preview logs:\n${logs.stdout}`);
       throw new Error(`Server failed to start after ${MAX_RETRIES * RETRY_DELAY_MS / 1000}s. HTTP code: ${lastHttpCode}. Port check: ${portCheck.stdout.trim()}. Logs: ${logs.stdout.slice(0, 500)}`);
     }
 
-    // Get the public URL
-    const outputUrl = `https://${sandbox.getHost(port)}`;
+    // Use the actual port where the server is running
+    const finalPort = actualPort;
+
+    // Get the public URL using the actual port where server is running
+    const outputUrl = `https://${sandbox.getHost(finalPort)}`;
 
     // Calculate expiry time
     const expiresAt = new Date(Date.now() + Math.min(ttlMs, MAX_PREVIEW_TTL_MS));
@@ -397,12 +426,12 @@ export async function startPreview(
       // Continue anyway - the preview is working
     }
 
-    // Update build with preview info
+    // Update build with preview info (use final port in case it changed)
     await updateBuild(buildId, {
       sandboxId: sandbox.id,
       outputUrl,
       previewStatus: 'running',
-      previewPort: port,
+      previewPort: finalPort,
       previewExpiresAt: expiresAt,
       previewStartedAt: startedAt,
     });
@@ -413,7 +442,7 @@ export async function startPreview(
       buildId,
       sandboxId: sandbox.id,
       outputUrl,
-      port,
+      port: finalPort,
       framework: framework.name,
       status: 'running',
       expiresAt,
