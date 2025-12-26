@@ -393,6 +393,16 @@ async function runRealBuild(
   activeSandboxes.set(buildId, sandbox);
   addLog('info', `Sandbox created: ${sandbox.id}`);
 
+  // Ensure Node.js 22 for compatibility with modern frameworks like Vite 6.x
+  addLog('info', 'Upgrading Node.js to v22 for modern framework compatibility...');
+  const { ensureNodeVersion } = await import('./sandbox-utils');
+  const nodeUpgraded = await ensureNodeVersion(sandbox, '22');
+  if (nodeUpgraded) {
+    addLog('info', 'Node.js v22 is now available');
+  } else {
+    addLog('warn', 'Node.js upgrade may have failed, continuing anyway...');
+  }
+
   // Extend sandbox timeout periodically to prevent timeout during long builds
   // E2B hobby tier has 1 hour max, so we extend every 50 minutes
   const TIMEOUT_EXTENSION_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
@@ -1079,6 +1089,16 @@ export async function resumeBuildFromCheckpoint(
 
       activeSandboxes.set(buildId, sandbox);
       addLog('info', `Sandbox created: ${sandbox.id}`);
+
+      // Ensure Node.js 22 for compatibility with modern frameworks like Vite 6.x
+      addLog('info', 'Upgrading Node.js to v22 for modern framework compatibility...');
+      const { ensureNodeVersion } = await import('./sandbox-utils');
+      const nodeUpgraded = await ensureNodeVersion(sandbox, '22');
+      if (nodeUpgraded) {
+        addLog('info', 'Node.js v22 is now available');
+      } else {
+        addLog('warn', 'Node.js upgrade may have failed, continuing anyway...');
+      }
 
       // Restore artifacts
       if (checkpoint.artifactKey) {

@@ -8,6 +8,7 @@
 import type { Sandbox } from '@repo/sandbox-providers';
 import { E2BProvider } from '@repo/sandbox-providers';
 import { updateBuild, getBuildById } from '@repo/database';
+import { ensureNodeVersion } from './sandbox-utils';
 
 // Shared E2B provider instance for sandbox verification
 const e2bProvider = new E2BProvider();
@@ -307,6 +308,13 @@ export async function startPreview(
   });
 
   try {
+    // Ensure Node.js 22 is available for modern frameworks like Vite 6.x
+    console.log(`[preview-manager] Ensuring Node.js 22 is available...`);
+    const nodeUpgraded = await ensureNodeVersion(sandbox, '22');
+    if (!nodeUpgraded) {
+      console.warn(`[preview-manager] Node.js upgrade may have failed, continuing anyway...`);
+    }
+
     // Install dependencies if needed
     if (framework.installCommand) {
       console.log(`[preview-manager] Installing dependencies: ${framework.installCommand}`);
