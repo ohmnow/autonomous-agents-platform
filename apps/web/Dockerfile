@@ -30,6 +30,9 @@ RUN pnpm install --frozen-lockfile
 # ============================================================================
 FROM base AS builder
 
+# Install OpenSSL dev for Prisma query engine generation
+RUN apk add --no-cache openssl openssl-dev
+
 # Copy installed dependencies
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
@@ -41,7 +44,7 @@ COPY --from=deps /app/packages/storage/node_modules ./packages/storage/node_modu
 # Copy all source code
 COPY . .
 
-# Generate Prisma client
+# Generate Prisma client with correct binary target
 RUN cd packages/database && pnpm exec prisma generate
 
 # Build all packages (turbo will handle order)
@@ -67,9 +70,14 @@ COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 
-# Copy Prisma schema, client, and migrations for runtime
+# Copy Prisma schema and migrations for runtime
 COPY --from=builder /app/packages/database/prisma ./packages/database/prisma
-COPY --from=builder /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma ./node_modules/.prisma
+
+# Copy the generated Prisma client with query engine
+# The standalone output should include traced dependencies, but we need to ensure
+# the query engine binary is available at the expected location
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma ./node_modules/@prisma
 
 # Copy migration script and make it executable
 COPY --from=builder /app/apps/web/migrate.sh ./migrate.sh
