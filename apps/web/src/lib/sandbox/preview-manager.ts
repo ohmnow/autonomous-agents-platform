@@ -46,21 +46,28 @@ export async function findProjectDirectory(
   sandbox: Sandbox,
   basePath: string = '/home/user'
 ): Promise<string> {
+  console.log(`[preview-manager] Searching for project in ${basePath}...`);
+  
+  // First, list what's in the base directory
+  const lsResult = await sandbox.exec(`ls -la ${basePath} 2>/dev/null | head -20`);
+  console.log(`[preview-manager] Contents of ${basePath}:\n${lsResult.stdout}`);
+  
   // First, check if package.json exists at the base path
   try {
-    await sandbox.readFile(`${basePath}/package.json`);
-    console.log(`[preview-manager] Found package.json at ${basePath}`);
+    const content = await sandbox.readFile(`${basePath}/package.json`);
+    console.log(`[preview-manager] Found package.json at ${basePath} (${content.length} bytes)`);
     return basePath;
-  } catch {
-    // No package.json at base path, continue searching
+  } catch (e) {
+    console.log(`[preview-manager] No package.json at ${basePath}: ${e}`);
   }
 
   // Check common subdirectories created by scaffolding tools
   for (const dir of COMMON_PROJECT_DIRS) {
+    const fullPath = `${basePath}/${dir}`;
     try {
-      await sandbox.readFile(`${basePath}/${dir}/package.json`);
-      console.log(`[preview-manager] Found package.json at ${basePath}/${dir}`);
-      return `${basePath}/${dir}`;
+      const content = await sandbox.readFile(`${fullPath}/package.json`);
+      console.log(`[preview-manager] Found package.json at ${fullPath} (${content.length} bytes)`);
+      return fullPath;
     } catch {
       // Not in this directory
     }
@@ -70,19 +77,20 @@ export async function findProjectDirectory(
   try {
     const result = await sandbox.exec(`ls -d ${basePath}/*/ 2>/dev/null | head -10`);
     const dirs = result.stdout.trim().split('\n').filter(Boolean);
+    console.log(`[preview-manager] Subdirectories found: ${dirs.join(', ')}`);
     
     for (const dir of dirs) {
       const cleanDir = dir.replace(/\/$/, '');
       try {
-        await sandbox.readFile(`${cleanDir}/package.json`);
-        console.log(`[preview-manager] Found package.json at ${cleanDir}`);
+        const content = await sandbox.readFile(`${cleanDir}/package.json`);
+        console.log(`[preview-manager] Found package.json at ${cleanDir} (${content.length} bytes)`);
         return cleanDir;
       } catch {
         // Not in this directory
       }
     }
-  } catch {
-    // ls failed, continue with fallbacks
+  } catch (e) {
+    console.log(`[preview-manager] ls failed: ${e}`);
   }
 
   // Check for Python projects (requirements.txt, app.py, main.py)
@@ -361,7 +369,13 @@ export async function startPreview(
     const startedAt = new Date();
 
     // Extend sandbox timeout to match preview TTL
-    await sandbox.setTimeout(Math.min(ttlMs, MAX_PREVIEW_TTL_MS));
+    // This may fail if sandbox already has a long timeout, so don't fail the whole preview
+    try {
+      await sandbox.setTimeout(Math.min(ttlMs, MAX_PREVIEW_TTL_MS));
+    } catch (timeoutError) {
+      console.warn(`[preview-manager] Could not extend sandbox timeout: ${timeoutError}`);
+      // Continue anyway - the preview is working
+    }
 
     // Update build with preview info
     await updateBuild(buildId, {
