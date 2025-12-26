@@ -7,6 +7,7 @@ import {
   stopPreview,
   getPreviewStatus,
   extendPreviewTTL,
+  isSandboxAlive,
 } from '@/lib/sandbox/preview-manager';
 import { restoreArtifactsToSandbox } from '@/lib/sandbox/artifact-storage';
 
@@ -95,8 +96,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    // Check if preview already running
-    const existingPreview = await getPreviewStatus(id);
+    // Check if preview already running - WITH sandbox verification
+    // This actually pings the sandbox to ensure it's alive, not just trusting DB state
+    const existingPreview = await getPreviewStatus(id, { verifySandbox: true });
     if (existingPreview && existingPreview.status === 'running') {
       return NextResponse.json({
         preview: {
@@ -107,6 +109,8 @@ export async function POST(request: Request, { params }: RouteParams) {
         message: 'Preview already running',
       });
     }
+    // If we get here, either no preview exists OR the sandbox was dead and marked expired
+    // In either case, we need to create a fresh sandbox
 
     // Check if artifacts are available
     if (!build.artifactKey) {
@@ -149,34 +153,42 @@ export async function POST(request: Request, { params }: RouteParams) {
     });
 
     try {
-      // Download and extract artifacts to sandbox
-      // For now, we'll need to implement this - the sandbox needs the built files
-      // TODO: Implement artifact download to sandbox
-      // For MVP, we'll only support previews for builds where sandbox is still alive
-      
-      // Check if we can reconnect to existing sandbox
+      // Try to reconnect to existing sandbox if it's still alive
       if (build.sandboxId) {
-        const existingSandbox = await e2bProvider.get(build.sandboxId);
-        if (existingSandbox) {
-          // Use existing sandbox
-          await sandbox.destroy(); // Destroy the new one we created
-          
-          const preview = await startPreview(id, existingSandbox, {
-            port,
-            ttlMs,
-          });
+        console.log(`[preview] Attempting to reconnect to existing sandbox ${build.sandboxId}`);
+        try {
+          const existingSandbox = await e2bProvider.get(build.sandboxId);
+          if (existingSandbox) {
+            // Verify sandbox is actually responsive
+            const alive = await isSandboxAlive(existingSandbox);
+            if (alive) {
+              // Use existing sandbox, destroy the new one we created
+              console.log(`[preview] Reconnected to existing sandbox ${build.sandboxId}`);
+              await sandbox.destroy();
+              
+              const preview = await startPreview(id, existingSandbox, {
+                port,
+                ttlMs,
+              });
 
-          return NextResponse.json(
-            {
-              preview: {
-                ...preview,
-                expiresAt: preview.expiresAt.toISOString(),
-                startedAt: preview.startedAt.toISOString(),
-              },
-              message: 'Preview started successfully',
-            },
-            { status: 201 }
-          );
+              return NextResponse.json(
+                {
+                  preview: {
+                    ...preview,
+                    expiresAt: preview.expiresAt.toISOString(),
+                    startedAt: preview.startedAt.toISOString(),
+                  },
+                  message: 'Preview started successfully (reconnected)',
+                },
+                { status: 201 }
+              );
+            } else {
+              console.log(`[preview] Existing sandbox ${build.sandboxId} is not responsive, will use fresh sandbox`);
+            }
+          }
+        } catch (reconnectError) {
+          console.log(`[preview] Could not reconnect to sandbox: ${reconnectError}`);
+          // Continue to restore from artifacts with fresh sandbox
         }
       }
 

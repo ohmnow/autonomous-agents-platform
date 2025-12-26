@@ -6,7 +6,11 @@
  */
 
 import type { Sandbox } from '@repo/sandbox-providers';
+import { E2BProvider } from '@repo/sandbox-providers';
 import { updateBuild, getBuildById } from '@repo/database';
+
+// Shared E2B provider instance for sandbox verification
+const e2bProvider = new E2BProvider();
 
 // Default preview configuration
 const DEFAULT_PREVIEW_PORT = 3000;
@@ -15,6 +19,22 @@ const MAX_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (E2B Pro limit)
 
 // Common subdirectories created by scaffolding tools (e.g., npm create vite@latest portfolio)
 const COMMON_PROJECT_DIRS = ['portfolio', 'app', 'project', 'frontend', 'client', 'web', 'site'];
+
+/**
+ * Check if a sandbox is still alive and responsive.
+ * Returns true if sandbox responds to a simple command, false if dead/expired.
+ */
+export async function isSandboxAlive(sandbox: Sandbox): Promise<boolean> {
+  try {
+    // Try a simple operation to verify sandbox is responsive
+    // Use a short timeout to fail fast if sandbox is dead
+    const result = await sandbox.exec('echo alive');
+    return result.exitCode === 0 && result.stdout.includes('alive');
+  } catch (error) {
+    console.log(`[preview-manager] Sandbox liveness check failed: ${error}`);
+    return false;
+  }
+}
 
 // Framework detection result
 export interface DetectedFramework {
@@ -450,9 +470,14 @@ export async function stopPreview(
 
 /**
  * Get the current preview status for a build.
+ * 
+ * @param buildId - The build ID to check
+ * @param options.verifySandbox - If true, actually ping the sandbox to verify it's alive.
+ *                                 If sandbox is dead, marks it as expired and returns null.
  */
 export async function getPreviewStatus(
-  buildId: string
+  buildId: string,
+  options?: { verifySandbox?: boolean }
 ): Promise<PreviewSession | null> {
   const build = await getBuildById(buildId);
   if (!build) {
@@ -465,14 +490,56 @@ export async function getPreviewStatus(
     return null;
   }
 
-  // Check if expired
+  // Check if expired by time
   const previewExpiresAt = build.previewExpiresAt;
   if (previewExpiresAt && new Date() > previewExpiresAt) {
     // Mark as expired
     await updateBuild(buildId, {
       previewStatus: 'expired',
+      sandboxId: undefined,
+      outputUrl: undefined,
     });
     return null;
+  }
+
+  // Optionally verify sandbox is actually alive (not just what DB says)
+  if (options?.verifySandbox && build.sandboxId) {
+    console.log(`[preview-manager] Verifying sandbox ${build.sandboxId} is alive...`);
+    try {
+      const sandbox = await e2bProvider.get(build.sandboxId);
+      if (!sandbox) {
+        console.log(`[preview-manager] Sandbox ${build.sandboxId} not found via provider`);
+        // Sandbox doesn't exist anymore, mark as expired
+        await updateBuild(buildId, {
+          previewStatus: 'expired',
+          sandboxId: undefined,
+          outputUrl: undefined,
+        });
+        return null;
+      }
+
+      // Actually ping the sandbox to verify it responds
+      const isAlive = await isSandboxAlive(sandbox);
+      if (!isAlive) {
+        console.log(`[preview-manager] Sandbox ${build.sandboxId} is not responsive, marking as expired`);
+        await updateBuild(buildId, {
+          previewStatus: 'expired',
+          sandboxId: undefined,
+          outputUrl: undefined,
+        });
+        return null;
+      }
+      console.log(`[preview-manager] Sandbox ${build.sandboxId} is alive and responsive`);
+    } catch (error) {
+      console.log(`[preview-manager] Error verifying sandbox: ${error}`);
+      // Sandbox verification failed, mark as expired
+      await updateBuild(buildId, {
+        previewStatus: 'expired',
+        sandboxId: undefined,
+        outputUrl: undefined,
+      });
+      return null;
+    }
   }
 
   return {
