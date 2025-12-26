@@ -340,33 +340,79 @@ export async function startPreview(
     }
 
     // Patch Vite config to allow E2B hosts (Vite 6.x security feature)
+    // E2B uses dynamic subdomains like xxx-sandboxid.e2b.app which Vite blocks by default
     if (framework.requiresHostPatch) {
-      console.log(`[preview-manager] Patching Vite config to allow E2B hosts...`);
-      // Create a vite config patch that allows all hosts
-      // This handles both vite.config.js and vite.config.ts
-      const patchScript = `
+      console.log(`[preview-manager] Configuring Vite to allow E2B hosts...`);
+      
+      // Method 1: Create a wrapper vite config that allows all hosts
+      // This is more reliable than sed-patching the existing config
+      const wrapperConfig = `
+// Wrapper config to allow E2B hosts - auto-generated for preview
+import { defineConfig, mergeConfig } from 'vite';
+import baseConfig from './vite.config.base';
+
+export default mergeConfig(baseConfig, defineConfig({
+  server: {
+    host: true,
+    allowedHosts: true,
+  },
+}));
+`;
+      
+      // First, check if vite.config exists and rename it
+      const renameResult = await sandbox.exec(`
         cd ${workspacePath} &&
-        for config in vite.config.js vite.config.ts vite.config.mjs; do
-          if [ -f "$config" ]; then
-            # Check if server.allowedHosts is already configured
-            if ! grep -q "allowedHosts" "$config"; then
-              # Add allowedHosts: true to the server config
-              # This sed handles the common case of server: { ... }
-              if grep -q "server:" "$config"; then
-                sed -i 's/server:\\s*{/server: { allowedHosts: true,/' "$config"
-              else
-                # If no server config, add it before the closing of defineConfig
-                sed -i 's/}\\s*);$/server: { allowedHosts: true, host: true } });/' "$config"
-              fi
-              echo "Patched $config"
-            else
-              echo "$config already has allowedHosts configured"
-            fi
+        for ext in js ts mjs; do
+          if [ -f "vite.config.\${ext}" ] && [ ! -f "vite.config.base.\${ext}" ]; then
+            cp "vite.config.\${ext}" "vite.config.base.\${ext}"
+            echo "Backed up vite.config.\${ext} to vite.config.base.\${ext}"
           fi
         done
+      `);
+      console.log(`[preview-manager] Backup result: ${renameResult.stdout.trim()}`);
+      
+      // Method 2 (simpler): Just add allowedHosts directly to the existing config
+      // Use node to patch the config programmatically
+      const patchScript = `
+        cd ${workspacePath} &&
+        node -e "
+          const fs = require('fs');
+          const files = ['vite.config.js', 'vite.config.ts', 'vite.config.mjs'];
+          for (const file of files) {
+            if (fs.existsSync(file)) {
+              let content = fs.readFileSync(file, 'utf8');
+              // Check if already patched
+              if (content.includes('allowedHosts')) {
+                console.log(file + ' already has allowedHosts');
+                continue;
+              }
+              // Find server: { or server : { and add allowedHosts
+              if (content.includes('server:') || content.includes('server :')) {
+                content = content.replace(
+                  /(server\\s*:\\s*\\{)/,
+                  'server: { allowedHosts: true, host: true,'
+                );
+              } else {
+                // Add server config before the last export default closing
+                content = content.replace(
+                  /(export\\s+default\\s+defineConfig\\s*\\(\\s*\\{)/,
+                  'export default defineConfig({ server: { allowedHosts: true, host: true },'
+                );
+              }
+              fs.writeFileSync(file, content);
+              console.log('Patched ' + file);
+              // Show the patched content for debugging
+              console.log('Content preview:', content.substring(0, 500));
+              break;
+            }
+          }
+        "
       `;
       const patchResult = await sandbox.exec(patchScript);
-      console.log(`[preview-manager] Vite config patch: ${patchResult.stdout.trim()}`);
+      console.log(`[preview-manager] Vite config patch result: ${patchResult.stdout}`);
+      if (patchResult.stderr) {
+        console.warn(`[preview-manager] Vite config patch stderr: ${patchResult.stderr}`);
+      }
     }
 
     // Start the server in background
