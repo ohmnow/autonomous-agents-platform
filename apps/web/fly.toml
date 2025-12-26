@@ -5,7 +5,7 @@ app = "autonomous-agents-platform"
 primary_region = "sjc"
 
 [build]
-  dockerfile = "apps/web/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [deploy]
   # Run database migrations before starting the new version
