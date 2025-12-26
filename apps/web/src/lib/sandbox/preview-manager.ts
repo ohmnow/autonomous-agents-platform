@@ -44,6 +44,7 @@ export interface DetectedFramework {
   port: number;
   buildCommand?: string;
   installCommand?: string;
+  requiresHostPatch?: boolean; // For Vite 6.x which requires allowedHosts config
 }
 
 // Preview session info
@@ -192,6 +193,8 @@ export async function detectFramework(
       startCommand: 'npm run dev -- --host 0.0.0.0 --port 5173',
       port: 5173,
       installCommand: 'npm install',
+      // Vite 6.x requires allowedHosts config for security - we'll patch this before starting
+      requiresHostPatch: true,
     };
   }
 
@@ -334,6 +337,36 @@ export async function startPreview(
       if (buildResult.exitCode !== 0) {
         throw new Error(`Build failed: ${buildResult.stderr}`);
       }
+    }
+
+    // Patch Vite config to allow E2B hosts (Vite 6.x security feature)
+    if (framework.requiresHostPatch) {
+      console.log(`[preview-manager] Patching Vite config to allow E2B hosts...`);
+      // Create a vite config patch that allows all hosts
+      // This handles both vite.config.js and vite.config.ts
+      const patchScript = `
+        cd ${workspacePath} &&
+        for config in vite.config.js vite.config.ts vite.config.mjs; do
+          if [ -f "$config" ]; then
+            # Check if server.allowedHosts is already configured
+            if ! grep -q "allowedHosts" "$config"; then
+              # Add allowedHosts: true to the server config
+              # This sed handles the common case of server: { ... }
+              if grep -q "server:" "$config"; then
+                sed -i 's/server:\\s*{/server: { allowedHosts: true,/' "$config"
+              else
+                # If no server config, add it before the closing of defineConfig
+                sed -i 's/}\\s*);$/server: { allowedHosts: true, host: true } });/' "$config"
+              fi
+              echo "Patched $config"
+            else
+              echo "$config already has allowedHosts configured"
+            fi
+          fi
+        done
+      `;
+      const patchResult = await sandbox.exec(patchScript);
+      console.log(`[preview-manager] Vite config patch: ${patchResult.stdout.trim()}`);
     }
 
     // Start the server in background
